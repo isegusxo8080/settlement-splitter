@@ -5,496 +5,262 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>정산 분리툴</title>
 
-  <!-- SheetJS + JSZip (CDN) -->
+  <!-- SheetJS + JSZip -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.19.3/dist/xlsx.full.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 
   <style>
-    :root { --bg:#0b0f17; --card:#121a27; --line:#223044; --text:#e8eef8; --muted:#a8b3c7; --btn:#2b66ff; --btn2:#1c2a3f; --bad:#ff4d4d; }
+    :root {
+      --bg:#0b0f17; --card:#121a27; --line:#223044;
+      --text:#e8eef8; --muted:#a8b3c7;
+      --btn:#2b66ff; --btn2:#1c2a3f; --bad:#ff4d4d;
+    }
     *{box-sizing:border-box}
-    body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Apple SD Gothic Neo,Noto Sans KR,sans-serif;background:linear-gradient(180deg,#070a10,#0b0f17);color:var(--text)}
+    body{
+      margin:0;
+      font-family:system-ui,-apple-system,Segoe UI,Roboto,Noto Sans KR,sans-serif;
+      background:linear-gradient(180deg,#070a10,#0b0f17);
+      color:var(--text)
+    }
     .wrap{max-width:980px;margin:0 auto;padding:28px 16px 48px}
-    .card{background:rgba(18,26,39,.92);border:1px solid var(--line);border-radius:14px;padding:18px 16px;box-shadow:0 12px 32px rgba(0,0,0,.25)}
+    .card{
+      background:rgba(18,26,39,.95);
+      border:1px solid var(--line);
+      border-radius:14px;
+      padding:18px 16px;
+      box-shadow:0 12px 32px rgba(0,0,0,.25)
+    }
     h1{font-size:18px;margin:0 0 14px}
     .muted{color:var(--muted);font-size:13px}
     .row{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end}
     .field{display:flex;flex-direction:column;gap:6px}
     label{font-size:12px;color:var(--muted)}
-    input[type="text"],input[type="number"],input[type="password"]{
+    input{
       background:#0e1522;border:1px solid var(--line);color:var(--text);
-      padding:10px 10px;border-radius:10px;outline:none;min-width:160px
+      padding:10px;border-radius:10px;outline:none;min-width:140px
     }
     input[type="file"]{color:var(--muted)}
     button{
-      border:0;border-radius:10px;padding:10px 12px;font-weight:700;
-      color:white;background:var(--btn);cursor:pointer
+      border:0;border-radius:10px;padding:10px 12px;
+      font-weight:700;color:white;background:var(--btn);cursor:pointer
     }
-    button.secondary{background:var(--btn2);color:var(--text);border:1px solid var(--line)}
+    button.secondary{
+      background:var(--btn2);color:var(--text);border:1px solid var(--line)
+    }
     button:disabled{opacity:.5;cursor:not-allowed}
-    .split{display:grid;grid-template-columns: 1fr;gap:12px}
-    @media (min-width: 860px){ .split{grid-template-columns: 1.1fr .9fr;} }
+    .split{display:grid;grid-template-columns:1fr;gap:12px}
+    @media (min-width:860px){.split{grid-template-columns:1.1fr .9fr}}
     .box{border:1px solid var(--line);border-radius:12px;padding:12px;background:#0e1522}
-    .groupList{max-height:360px;overflow:auto;padding-right:6px}
-    .gitem{display:flex;align-items:center;gap:10px;padding:8px 6px;border-bottom:1px dashed rgba(34,48,68,.5)}
+    .groupList{max-height:360px;overflow:auto}
+    .gitem{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px dashed #223044}
     .gitem:last-child{border-bottom:none}
     .badge{font-size:12px;color:var(--muted)}
     .err{color:var(--bad);font-weight:700}
     .ok{color:#7CFFAE;font-weight:700}
     .topbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
-    .tiny{font-size:12px;color:var(--muted);line-height:1.45}
     .hr{height:1px;background:var(--line);margin:12px 0}
   </style>
 </head>
 
 <body>
-  <div class="wrap">
+<div class="wrap">
 
-    <!-- LOCK SCREEN -->
-    <div id="lock" class="card">
-      <div class="topbar">
-        <h1>정산 분리툴 🔐</h1>
-        <div class="badge">Netlify 배포용</div>
-      </div>
-
-      <div class="row">
-        <div class="field">
-          <label>비밀번호</label>
-          <input id="pw" type="password" placeholder="비밀번호 입력" autocomplete="current-password" />
-        </div>
-        <button id="enterBtn">입장</button>
-      </div>
-
-      <div style="margin-top:10px" class="tiny">
-        비번이 맞으면 이 페이지가 정산 분리 화면으로 전환됩니다.<br/>
-        (정산 엑셀은 서버로 업로드되지 않고 브라우저에서만 처리되도록 구성)
-      </div>
-
-      <div style="margin-top:10px" id="lockMsg" class="err"></div>
+  <!-- LOCK -->
+  <div id="lock" class="card">
+    <div class="topbar">
+      <h1>정산 분리툴 🔐</h1>
+      <div class="badge">접근 제한</div>
     </div>
 
-    <!-- APP SCREEN -->
-    <div id="app" class="card" style="display:none">
-      <div class="topbar">
-        <h1>정산리스트 그룹별 분리 🧾</h1>
-        <div class="badge" id="status">대기</div>
+    <div class="row">
+      <div class="field">
+        <label>비밀번호</label>
+        <input id="pw" type="password" placeholder="비밀번호 입력" />
       </div>
-
-      <div class="split">
-        <div class="box">
-          <div class="row">
-            <div class="field">
-              <label>월 (파일명 앞)</label>
-              <input id="month" type="text" value="11월" />
-            </div>
-            <div class="field">
-              <label>양식 끝 행 (예: 9)</label>
-              <input id="headerEnd" type="number" value="9" min="1" />
-            </div>
-            <div class="field">
-              <label>데이터 시작 행 (예: 10)</label>
-              <input id="dataStart" type="number" value="10" min="1" />
-            </div>
-            <div class="field">
-              <label>열 시작 (예: A)</label>
-              <input id="colStart" type="text" value="A" />
-            </div>
-            <div class="field">
-              <label>열 끝 (예: CD)</label>
-              <input id="colEnd" type="text" value="CD" />
-            </div>
-          </div>
-
-          <div class="hr"></div>
-
-          <div class="row">
-            <div class="field" style="min-width:280px">
-              <label>정산 엑셀 업로드 (.xlsx)</label>
-              <input id="file" type="file" accept=".xlsx" />
-            </div>
-            <button id="scanBtn" class="secondary" disabled>그룹 불러오기</button>
-            <button id="zipBtn" disabled>ZIP 생성</button>
-          </div>
-
-          <div style="margin-top:10px" class="tiny">
-            고정값: 시트명 <b>정산리스트</b>, 그룹열 <b>B</b><br/>
-            파일명: <b>N월 (주)수석네트웍스_(그룹명).xlsx</b>
-          </div>
-
-          <div style="margin-top:10px" id="appMsg" class="tiny"></div>
-        </div>
-
-        <div class="box">
-          <div class="row" style="justify-content:space-between">
-            <div>
-              <div style="font-weight:800">그룹 선택</div>
-              <div class="muted" id="groupCount">업로드 후 그룹을 불러오세요.</div>
-            </div>
-            <div class="row">
-              <button id="allOn" class="secondary" disabled>전체선택</button>
-              <button id="allOff" class="secondary" disabled>전체해제</button>
-            </div>
-          </div>
-
-          <div class="hr"></div>
-
-          <div id="groups" class="groupList"></div>
-        </div>
-      </div>
+      <button id="enterBtn">입장</button>
     </div>
 
+    <div id="lockMsg" class="err" style="margin-top:10px"></div>
   </div>
 
+  <!-- APP -->
+  <div id="app" class="card" style="display:none">
+    <div class="topbar">
+      <h1>정산리스트 그룹 분리 🧾</h1>
+      <div class="badge" id="status">대기</div>
+    </div>
+
+    <div class="split">
+      <div class="box">
+        <div class="row">
+          <div class="field">
+            <label>월</label>
+            <input id="month" value="11월" />
+          </div>
+          <div class="field">
+            <label>양식 끝 행</label>
+            <input id="headerEnd" type="number" value="9" />
+          </div>
+          <div class="field">
+            <label>데이터 시작 행</label>
+            <input id="dataStart" type="number" value="10" />
+          </div>
+          <div class="field">
+            <label>열 시작</label>
+            <input id="colStart" value="A" />
+          </div>
+          <div class="field">
+            <label>열 끝</label>
+            <input id="colEnd" value="CD" />
+          </div>
+        </div>
+
+        <div class="hr"></div>
+
+        <div class="row">
+          <input id="file" type="file" accept=".xlsx" />
+          <button id="scanBtn" class="secondary" disabled>그룹 불러오기</button>
+          <button id="zipBtn" disabled>ZIP 생성</button>
+        </div>
+
+        <div id="appMsg" class="muted" style="margin-top:8px"></div>
+      </div>
+
+      <div class="box">
+        <div class="row" style="justify-content:space-between">
+          <div>
+            <b>그룹 선택</b>
+            <div id="groupCount" class="muted">업로드 필요</div>
+          </div>
+          <div class="row">
+            <button id="allOn" class="secondary" disabled>전체선택</button>
+            <button id="allOff" class="secondary" disabled>전체해제</button>
+          </div>
+        </div>
+        <div class="hr"></div>
+        <div id="groups" class="groupList"></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
 <script>
-  // ===== Password lock (hash compare) =====
-  // sha256("ss315696ss") precomputed:
-  const PASS_SHA256 = "37ebc014d55d83a763a0a24fedffe06705d4042b8243b1bba45c311d8ab1ea45";
+/* ===== 비밀번호 (직접 비교) ===== */
+const PASSWORD = "ss315696ss";
+const FIXED_SHEET = "정산리스트";
+const GROUP_COL = "B";
+const $ = id => document.getElementById(id);
 
-  const $ = (id) => document.getElementById(id);
+$("enterBtn").onclick = () => {
+  $("lockMsg").textContent = "";
+  if ($("pw").value !== PASSWORD) {
+    $("lockMsg").textContent = "비밀번호가 틀렸습니다.";
+    return;
+  }
+  $("lock").style.display = "none";
+  $("app").style.display = "block";
+};
 
-  function setStatus(text, good=false) {
-    const s = $("status");
-    s.textContent = text;
-    s.className = "badge " + (good ? "ok" : "");
+$("pw").addEventListener("keydown", e => {
+  if (e.key === "Enter") $("enterBtn").click();
+});
+
+/* ===== Excel 처리 ===== */
+let workbook, sheet, groupsMap = new Map();
+
+function colToIdx(c){
+  let n=0; c=c.toUpperCase();
+  for(let i=0;i<c.length;i++) n=n*26+(c.charCodeAt(i)-64);
+  return n;
+}
+function addr(c,r){
+  let s=""; while(c){let m=(c-1)%26;s=String.fromCharCode(65+m)+s;c=(c-1)/26|0}
+  return s+r;
+}
+
+$("file").onchange = () => {
+  $("scanBtn").disabled = !$("file").files[0];
+};
+
+$("scanBtn").onclick = async () => {
+  const f = $("file").files[0];
+  const ab = await f.arrayBuffer();
+  workbook = XLSX.read(ab, {type:"array", cellStyles:true});
+  sheet = workbook.Sheets[FIXED_SHEET];
+  if (!sheet) { alert("정산리스트 시트 없음"); return; }
+
+  groupsMap.clear();
+  const start = +$("dataStart").value;
+  const gcol = colToIdx(GROUP_COL);
+  const range = XLSX.utils.decode_range(sheet["!ref"]);
+
+  for(let r=start;r<=range.e.r+1;r++){
+    const v = sheet[addr(gcol,r)]?.v;
+    if(!v) continue;
+    if(!groupsMap.has(v)) groupsMap.set(v,[]);
+    groupsMap.get(v).push(r);
   }
 
-  async function sha256Hex(str) {
-    const enc = new TextEncoder().encode(str);
-    const buf = await crypto.subtle.digest("SHA-256", enc);
-    return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2,"0")).join("");
-  }
-
-  $("enterBtn").addEventListener("click", async () => {
-    $("lockMsg").textContent = "";
-    const pw = $("pw").value ?? "";
-    if (!pw.trim()) { $("lockMsg").textContent = "비밀번호를 입력해줘."; return; }
-
-    try {
-      const h = await sha256Hex(pw);
-      if (h !== PASS_SHA256) { $("lockMsg").textContent = "비밀번호가 틀렸어."; return; }
-      $("lock").style.display = "none";
-      $("app").style.display = "block";
-      setStatus("대기", true);
-      $("pw").value = "";
-    } catch (e) {
-      $("lockMsg").textContent = "비밀번호 처리 중 오류가 났어.";
-    }
+  const root = $("groups"); root.innerHTML="";
+  [...groupsMap.keys()].sort().forEach(g=>{
+    root.innerHTML += `<div class="gitem">
+      <input type="checkbox" checked data-g="${g}"/> ${g}
+    </div>`;
   });
 
-  $("pw").addEventListener("keydown", (e) => {
-    if (e.key === "Enter") $("enterBtn").click();
-  });
+  $("groupCount").textContent = `총 ${groupsMap.size}개`;
+  $("zipBtn").disabled = false;
+  $("allOn").disabled = false;
+  $("allOff").disabled = false;
+};
 
-  // ===== Excel helpers =====
-  const FIXED_SHEET = "정산리스트";
-  const GROUP_COL_LETTER = "B";
+$("allOn").onclick = ()=>document.querySelectorAll("#groups input").forEach(x=>x.checked=true);
+$("allOff").onclick = ()=>document.querySelectorAll("#groups input").forEach(x=>x.checked=false);
 
-  function safeFilePart(s) {
-    const t = String(s ?? "").trim();
-    if (!t) return "그룹없음";
-    return t.replace(/[\\\/:*?"<>|]/g, "_").replace(/\s+/g, " ").trim();
-  }
+$("zipBtn").onclick = async () => {
+  const zip = new JSZip();
+  const month = $("month").value;
+  const hEnd = +$("headerEnd").value;
+  const dStart = +$("dataStart").value;
+  const cS = colToIdx($("colStart").value);
+  const cE = colToIdx($("colEnd").value);
 
-  function colLetterToIndex(letter) {
-    // A -> 1, Z -> 26, AA -> 27
-    const s = String(letter || "").toUpperCase().trim();
-    if (!/^[A-Z]+$/.test(s)) return null;
-    let n = 0;
-    for (let i = 0; i < s.length; i++) n = n * 26 + (s.charCodeAt(i) - 64);
-    return n;
-  }
+  document.querySelectorAll("#groups input:checked").forEach(cb=>{
+    const g = cb.dataset.g;
+    const rows = groupsMap.get(g);
+    const out = {};
 
-  function indexToColLetter(n) {
-    let s = "";
-    while (n > 0) {
-      const r = (n - 1) % 26;
-      s = String.fromCharCode(65 + r) + s;
-      n = Math.floor((n - 1) / 26);
-    }
-    return s;
-  }
+    for(let r=1;r<=hEnd;r++)
+      for(let c=cS;c<=cE;c++)
+        if(sheet[addr(c,r)])
+          out[addr(c-cS+1,r)] = {...sheet[addr(c,r)]};
 
-  function addr(c, r) { return indexToColLetter(c) + String(r); }
-
-  function getInputConfig() {
-    const month = $("month").value.trim();
-    const headerEnd = Number($("headerEnd").value);
-    const dataStart = Number($("dataStart").value);
-    const cStart = colLetterToIndex($("colStart").value);
-    const cEnd = colLetterToIndex($("colEnd").value);
-
-    const errs = [];
-    if (!month) errs.push("월 입력이 비었어.");
-    if (!Number.isFinite(headerEnd) || headerEnd < 1) errs.push("양식 끝 행이 이상해.");
-    if (!Number.isFinite(dataStart) || dataStart < 1) errs.push("데이터 시작 행이 이상해.");
-    if (Number.isFinite(headerEnd) && Number.isFinite(dataStart) && headerEnd >= dataStart) errs.push("양식 끝 행은 데이터 시작 행보다 작아야 해.");
-    if (!cStart) errs.push("열 시작이 이상해. 예: A");
-    if (!cEnd) errs.push("열 끝이 이상해. 예: CD");
-    if (cStart && cEnd && cStart > cEnd) errs.push("열 시작이 열 끝보다 뒤야.");
-
-    return { month, headerEnd, dataStart, cStart, cEnd, errs };
-  }
-
-  let gWorkbook = null;
-  let gSheet = null;
-  let gGroups = [];          // unique group names
-  let gGroupRows = new Map(); // group -> array of original row numbers
-
-  function renderGroups(groups) {
-    const root = $("groups");
-    root.innerHTML = "";
-    groups.forEach(g => {
-      const id = "g_" + btoa(unescape(encodeURIComponent(g))).replace(/=/g,"");
-      const div = document.createElement("div");
-      div.className = "gitem";
-      div.innerHTML = `
-        <input type="checkbox" id="${id}" data-group="${encodeURIComponent(g)}" checked />
-        <label for="${id}" style="cursor:pointer">${g}</label>
-      `;
-      root.appendChild(div);
+    let rr=dStart;
+    rows.forEach(sr=>{
+      for(let c=cS;c<=cE;c++)
+        if(sheet[addr(c,sr)])
+          out[addr(c-cS+1,rr)] = {...sheet[addr(c,sr)]};
+      rr++;
     });
-    $("groupCount").textContent = `그룹 ${groups.length}개`;
-  }
 
-  function getSelectedGroups() {
-    const cbs = $("groups").querySelectorAll('input[type="checkbox"]');
-    const out = [];
-    cbs.forEach(cb => {
-      if (cb.checked) out.push(decodeURIComponent(cb.dataset.group));
+    out["!ref"] = XLSX.utils.encode_range({
+      s:{c:0,r:0},
+      e:{c:cE-cS,r:rr-1}
     });
-    return out;
-  }
 
-  function setAllGroups(on) {
-    const cbs = $("groups").querySelectorAll('input[type="checkbox"]');
-    cbs.forEach(cb => cb.checked = on);
-  }
-
-  $("file").addEventListener("change", () => {
-    const f = $("file").files?.[0];
-    $("scanBtn").disabled = !f;
-    $("zipBtn").disabled = true;
-    $("allOn").disabled = true;
-    $("allOff").disabled = true;
-    $("groups").innerHTML = "";
-    $("groupCount").textContent = "업로드 후 그룹을 불러오세요.";
-    $("appMsg").textContent = "";
-    gWorkbook = null; gSheet = null; gGroups = []; gGroupRows = new Map();
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb,out,FIXED_SHEET);
+    zip.file(`${month} (주)수석네트웍스_${g}.xlsx`,
+      XLSX.write(wb,{type:"array",bookType:"xlsx"}));
   });
 
-  $("scanBtn").addEventListener("click", async () => {
-    $("appMsg").textContent = "";
-    const cfg = getInputConfig();
-    if (cfg.errs.length) {
-      $("appMsg").innerHTML = `<span class="err">${cfg.errs.join(" ")}</span>`;
-      return;
-    }
-
-    const f = $("file").files?.[0];
-    if (!f) return;
-
-    setStatus("엑셀 읽는 중...");
-    try {
-      const ab = await f.arrayBuffer();
-      // cellStyles: true to read styles where possible
-      gWorkbook = XLSX.read(ab, { type: "array", cellStyles: true, cellNF: true, cellText: false });
-      gSheet = gWorkbook.Sheets[FIXED_SHEET];
-      if (!gSheet) {
-        setStatus("오류");
-        $("appMsg").innerHTML = `<span class="err">시트 '${FIXED_SHEET}'를 찾지 못했어.</span>`;
-        return;
-      }
-
-      // Determine last row from !ref
-      const ref = gSheet["!ref"];
-      if (!ref) {
-        setStatus("오류");
-        $("appMsg").innerHTML = `<span class="err">시트 범위를 읽지 못했어.</span>`;
-        return;
-      }
-      const range = XLSX.utils.decode_range(ref);
-      const lastRow = range.e.r + 1; // 1-based row
-      const groupColIdx = colLetterToIndex(GROUP_COL_LETTER);
-      if (!groupColIdx) throw new Error("Bad group col");
-
-      // Build group -> rows map
-      gGroupRows = new Map();
-      for (let r = cfg.dataStart; r <= lastRow; r++) {
-        const a = addr(groupColIdx, r);
-        const cell = gSheet[a];
-        const gv = cell ? String(cell.v ?? "").trim() : "";
-        if (!gv) continue;
-        if (!gGroupRows.has(gv)) gGroupRows.set(gv, []);
-        gGroupRows.get(gv).push(r);
-      }
-
-      gGroups = Array.from(gGroupRows.keys()).sort((a,b)=>a.localeCompare(b, "ko"));
-      renderGroups(gGroups);
-
-      $("zipBtn").disabled = gGroups.length === 0;
-      $("allOn").disabled = gGroups.length === 0;
-      $("allOff").disabled = gGroups.length === 0;
-      setStatus("그룹 로드 완료", true);
-
-      if (gGroups.length === 0) {
-        $("appMsg").innerHTML = `<span class="err">데이터 시작 행부터 그룹(B열)이 한 건도 없었어.</span>`;
-      } else {
-        $("appMsg").textContent = `업로드 완료. 필요한 그룹만 체크하고 ZIP 생성 누르면 돼.`;
-      }
-    } catch (e) {
-      console.error(e);
-      setStatus("오류");
-      $("appMsg").innerHTML = `<span class="err">엑셀 읽기 실패. 파일이 .xlsx 맞는지 확인해줘.</span>`;
-    }
-  });
-
-  $("allOn").addEventListener("click", () => setAllGroups(true));
-  $("allOff").addEventListener("click", () => setAllGroups(false));
-
-  function copyCell(srcSheet, dstSheet, srcAddr, dstAddr) {
-    const c = srcSheet[srcAddr];
-    if (!c) return;
-    // shallow copy is fine for SheetJS cell objects
-    dstSheet[dstAddr] = Object.assign({}, c);
-  }
-
-  function sliceColsMeta(cols, cStart, cEnd) {
-    if (!Array.isArray(cols)) return cols;
-    const out = [];
-    for (let c = cStart; c <= cEnd; c++) out.push(cols[c-1] || {});
-    return out;
-  }
-
-  function sliceRowsMeta(rows, rStart, rEnd) {
-    if (!Array.isArray(rows)) return rows;
-    const out = [];
-    for (let r = rStart; r <= rEnd; r++) out.push(rows[r-1] || {});
-    return out;
-  }
-
-  function copyMergesInHeader(srcMerges, headerEnd, cStart, cEnd) {
-    if (!Array.isArray(srcMerges)) return [];
-    const out = [];
-    for (const m of srcMerges) {
-      const r1 = m.s.r + 1, r2 = m.e.r + 1;
-      const c1 = m.s.c + 1, c2 = m.e.c + 1;
-      const withinRows = (r1 >= 1 && r2 <= headerEnd);
-      const withinCols = (c1 >= cStart && c2 <= cEnd);
-      if (withinRows && withinCols) {
-        out.push({
-          s: { r: (r1-1), c: (c1 - cStart) },
-          e: { r: (r2-1), c: (c2 - cStart) }
-        });
-      }
-    }
-    return out;
-  }
-
-  $("zipBtn").addEventListener("click", async () => {
-    $("appMsg").textContent = "";
-    const cfg = getInputConfig();
-    if (cfg.errs.length) {
-      $("appMsg").innerHTML = `<span class="err">${cfg.errs.join(" ")}</span>`;
-      return;
-    }
-    if (!gWorkbook || !gSheet) {
-      $("appMsg").innerHTML = `<span class="err">먼저 그룹 불러오기를 해줘.</span>`;
-      return;
-    }
-
-    const selected = getSelectedGroups();
-    if (selected.length === 0) {
-      $("appMsg").innerHTML = `<span class="err">선택된 그룹이 없어.</span>`;
-      return;
-    }
-
-    setStatus("ZIP 생성 중...");
-    $("zipBtn").disabled = true;
-
-    try {
-      const zip = new JSZip();
-
-      // source metas
-      const srcCols = gSheet["!cols"];
-      const srcRows = gSheet["!rows"];
-      const srcMerges = gSheet["!merges"];
-
-      // figure out lastRow
-      const range = XLSX.utils.decode_range(gSheet["!ref"]);
-      const lastRow = range.e.r + 1;
-
-      for (let i = 0; i < selected.length; i++) {
-        const group = selected[i];
-        const rows = gGroupRows.get(group) || [];
-
-        // destination sheet object
-        const outSheet = {};
-
-        // Copy header (1..headerEnd), col slice
-        for (let r = 1; r <= cfg.headerEnd; r++) {
-          for (let c = cfg.cStart; c <= cfg.cEnd; c++) {
-            const srcA = addr(c, r);
-            const dstA = addr(c - cfg.cStart + 1, r);
-            copyCell(gSheet, outSheet, srcA, dstA);
-          }
-        }
-
-        // Copy group rows into sequential rows starting at dataStart
-        let outR = cfg.dataStart;
-        for (const srcR of rows) {
-          // ignore if outR exceeds something? Not needed
-          for (let c = cfg.cStart; c <= cfg.cEnd; c++) {
-            const srcA = addr(c, srcR);
-            const dstA = addr(c - cfg.cStart + 1, outR);
-            copyCell(gSheet, outSheet, srcA, dstA);
-          }
-          outR++;
-        }
-
-        // set sheet range
-        const outLastRow = Math.max(cfg.headerEnd, (cfg.dataStart + rows.length - 1));
-        outSheet["!ref"] = XLSX.utils.encode_range({
-          s: { c: 0, r: 0 },
-          e: { c: (cfg.cEnd - cfg.cStart), r: (outLastRow - 1) }
-        });
-
-        // copy metas (best effort)
-        outSheet["!cols"] = sliceColsMeta(srcCols, cfg.cStart, cfg.cEnd);
-        outSheet["!rows"] = sliceRowsMeta(srcRows, 1, outLastRow);
-        outSheet["!merges"] = copyMergesInHeader(srcMerges, cfg.headerEnd, cfg.cStart, cfg.cEnd);
-
-        // create workbook
-        const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, outSheet, FIXED_SHEET);
-
-        const fname = `${cfg.month} (주)수석네트웍스_${safeFilePart(group)}.xlsx`;
-        const wbout = XLSX.write(wb, { bookType: "xlsx", type: "array", cellStyles: true });
-
-        zip.file(fname, wbout);
-        setStatus(`생성 중... (${i+1}/${selected.length})`);
-      }
-
-      const zipBlob = await zip.generateAsync({ type: "blob" });
-      const zipName = `${cfg.month} (주)수석네트웍스_정산서.zip`;
-
-      // download
-      const a = document.createElement("a");
-      a.href = URL.createObjectURL(zipBlob);
-      a.download = zipName;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(a.href);
-
-      setStatus("완료", true);
-      $("appMsg").innerHTML = `<span class="ok">ZIP 다운로드가 시작됐어.</span>`;
-    } catch (e) {
-      console.error(e);
-      setStatus("오류");
-      $("appMsg").innerHTML = `<span class="err">ZIP 생성 중 오류가 났어. (콘솔 로그 확인)</span>`;
-    } finally {
-      $("zipBtn").disabled = false;
-    }
-  });
+  const blob = await zip.generateAsync({type:"blob"});
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(blob);
+  a.download=`${$("month").value} (주)수석네트웍스_정산서.zip`;
+  a.click();
+};
 </script>
 </body>
 </html>
