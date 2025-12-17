@@ -44,6 +44,7 @@
 
 <body>
 <div class="wrap">
+
   <div id="lock" class="card">
     <div class="topbar">
       <h1>정산 분리툴 🔐</h1>
@@ -70,7 +71,7 @@
       <div class="box">
         <div class="row">
           <div class="field"><label>월</label><input id="month" value="11월" /></div>
-          <div class="field"><label>양식 끝 행(헤더행)</label><input id="headerEnd" type="number" value="9" min="1" /></div>
+          <div class="field"><label>양식 끝 행</label><input id="headerEnd" type="number" value="9" min="1" /></div>
           <div class="field"><label>데이터 시작 행</label><input id="dataStart" type="number" value="10" min="1" /></div>
           <div class="field"><label>열 시작</label><input id="colStart" value="A" /></div>
           <div class="field"><label>열 끝</label><input id="colEnd" value="AZ" /></div>
@@ -89,7 +90,7 @@
 
         <div id="appMsg" class="muted" style="margin-top:10px"></div>
         <div class="muted" style="margin-top:6px">
-          적용 규칙: 1~8 옅은 회색(테두리X), 9행 굵은 테두리, 10행~ 얇은 검은 테두리, wrap OFF, 줌70/눈금선OFF
+          템플릿 기반: repo의 <b>template.xlsx</b> 서식을 그대로 사용하고, 데이터 영역만 값으로 주입합니다.
         </div>
       </div>
 
@@ -109,12 +110,14 @@
       </div>
     </div>
   </div>
+
 </div>
 
 <script>
 const PASSWORD = "ss315696ss";
 const FIXED_SHEET = "정산리스트";
 const GROUP_COL = "B";
+const TEMPLATE_URL = "./template.xlsx"; // repo 루트에 올려둔 템플릿
 const $ = id => document.getElementById(id);
 
 function setLoading(on, text){
@@ -139,7 +142,8 @@ $("enterBtn").onclick = () => {
 };
 $("pw").addEventListener("keydown", e => { if(e.key==="Enter") $("enterBtn").click(); });
 
-let workbook=null, sheet=null, groupsMap=new Map();
+let sourceWb=null, sourceSheet=null, groupsMap=new Map();
+let templateWb=null; // 캐시
 
 function colToIdx(c){
   let n=0; c=String(c||"").toUpperCase().trim();
@@ -152,19 +156,19 @@ function A(c,r){ return idxToCol(c)+r; }
 
 function validate(){
   const month = $("month").value.trim();
-  const headerEnd = Number($("headerEnd").value);
-  const dataStart = Number($("dataStart").value);
+  const hEnd = Number($("headerEnd").value);
+  const dStart = Number($("dataStart").value);
   const cS = colToIdx($("colStart").value);
   const cE = colToIdx($("colEnd").value);
   const errs=[];
   if(!month) errs.push("월이 비었습니다.");
-  if(!Number.isFinite(headerEnd)||headerEnd<1) errs.push("양식 끝 행이 이상합니다.");
-  if(!Number.isFinite(dataStart)||dataStart<1) errs.push("데이터 시작 행이 이상합니다.");
-  if(Number.isFinite(headerEnd)&&Number.isFinite(dataStart)&&headerEnd>=dataStart) errs.push("양식 끝 행은 데이터 시작 행보다 작아야 합니다.");
+  if(!Number.isFinite(hEnd)||hEnd<1) errs.push("양식 끝 행이 이상합니다.");
+  if(!Number.isFinite(dStart)||dStart<1) errs.push("데이터 시작 행이 이상합니다.");
+  if(Number.isFinite(hEnd)&&Number.isFinite(dStart)&&hEnd>=dStart) errs.push("양식 끝 행은 데이터 시작 행보다 작아야 합니다.");
   if(!cS) errs.push("열 시작이 이상합니다. 예: A");
   if(!cE) errs.push("열 끝이 이상합니다. 예: AZ");
   if(cS&&cE&&cS>cE) errs.push("열 시작이 열 끝보다 뒤입니다.");
-  return {month, headerEnd, dataStart, cS, cE, errs};
+  return {month,hEnd,dStart,cS,cE,errs};
 }
 
 function renderGroups(){
@@ -188,55 +192,11 @@ $("file").onchange=()=>{
   $("groups").innerHTML="";
   $("groupCount").textContent="업로드 후 그룹을 불러오세요.";
   msg("");
-  workbook=null; sheet=null; groupsMap=new Map();
+  sourceWb=null; sourceSheet=null; groupsMap=new Map();
 };
 
 $("allOn").onclick=()=>document.querySelectorAll("#groups input[type=checkbox]").forEach(x=>x.checked=true);
 $("allOff").onclick=()=>document.querySelectorAll("#groups input[type=checkbox]").forEach(x=>x.checked=false);
-
-$("scanBtn").onclick=async()=>{
-  const f=$("file").files?.[0]; if(!f) return;
-  const v=validate(); if(v.errs.length){ msg(v.errs.join(" "), true); return; }
-
-  try{
-    setLoading(true, "그룹 불러오는 중");
-    $("scanBtn").disabled=true;
-    $("zipBtn").disabled=true;
-    $("allOn").disabled=true;
-    $("allOff").disabled=true;
-    $("groups").innerHTML=`<div class="row"><span class="spinner"></span><span class="muted">로딩중...</span></div>`;
-
-    const ab=await f.arrayBuffer();
-    workbook = XLSX.read(ab, {type:"array", cellStyles:true, cellNF:true, cellText:false});
-    sheet = workbook.Sheets[FIXED_SHEET];
-    if(!sheet){ msg(`'${FIXED_SHEET}' 시트를 찾지 못했습니다.`, true); setLoading(false,"오류"); return; }
-
-    groupsMap.clear();
-    const gcol=colToIdx(GROUP_COL);
-    const range=XLSX.utils.decode_range(sheet["!ref"]);
-    for(let r=v.dataStart; r<=range.e.r+1; r++){
-      const cell = sheet[A(gcol,r)];
-      const gv = cell ? String(cell.v ?? "").trim() : "";
-      if(!gv) continue;
-      if(!groupsMap.has(gv)) groupsMap.set(gv, []);
-      groupsMap.get(gv).push(r);
-    }
-
-    renderGroups();
-    const has=groupsMap.size>0;
-    $("zipBtn").disabled=!has;
-    $("allOn").disabled=!has;
-    $("allOff").disabled=!has;
-    msg(has ? `<span class="ok">그룹 로드 완료</span>` : `<span class="err">그룹 데이터가 없습니다.</span>`, !has);
-    setLoading(false, has ? "대기" : "오류");
-  }catch(e){
-    console.error(e);
-    msg("그룹 불러오기 오류(콘솔 확인)", true);
-    setLoading(false, "오류");
-  }finally{
-    $("scanBtn").disabled=false;
-  }
-};
 
 function safeFilePart(s){
   return String(s ?? "").trim()
@@ -245,7 +205,24 @@ function safeFilePart(s){
     .trim() || "그룹없음";
 }
 
-/* ===== 값만 남기기(수식 제거) ===== */
+/* 템플릿 로드(한 번만) */
+async function ensureTemplateLoaded(){
+  if(templateWb) return templateWb;
+  const res = await fetch(TEMPLATE_URL, {cache:"no-store"});
+  if(!res.ok) throw new Error(`template.xlsx 로드 실패: ${res.status}`);
+  const ab = await res.arrayBuffer();
+  templateWb = XLSX.read(ab, {type:"array", cellStyles:true, cellNF:true, cellText:false});
+  if(!templateWb.Sheets?.[FIXED_SHEET]) throw new Error(`템플릿에 '${FIXED_SHEET}' 시트가 없습니다.`);
+  return templateWb;
+}
+
+/* 깊은 복사 */
+function deepClone(obj){
+  if (typeof structuredClone === "function") return structuredClone(obj);
+  return JSON.parse(JSON.stringify(obj));
+}
+
+/* 값 셀 만들기(수식 제거, 보이는 값 기준) */
 function valueOnlyCell(sc){
   if(!sc) return null;
   let v = sc.v;
@@ -260,173 +237,115 @@ function valueOnlyCell(sc){
   if (z !== undefined) out.z = z;
   return out;
 }
-function copyValue(srcSheet, dstSheet, sAddr, dAddr){
-  const sc = srcSheet[sAddr];
-  if(!sc) return;
-  const c = valueOnlyCell(sc);
-  if(!c) return;
-  dstSheet[dAddr] = c;
-}
 
-/* ===== 스타일 헬퍼 ===== */
-function borderAll(style="thin", rgb="000000"){
-  const c = {rgb};
-  return { top:{style,color:c}, bottom:{style,color:c}, left:{style,color:c}, right:{style,color:c} };
-}
-function borderBottomOnly(style="double", rgb="000000"){
-  const c = {rgb};
-  return { bottom:{style,color:c} };
-}
-function fill(rgb){ return {patternType:"solid", fgColor:{rgb}}; }
-function style({bold=false, sz=10, align="center", wrap=false, fillRgb=null, borderObj=null}={}){
-  const s = {
-    font:{name:"맑은 고딕", sz, bold},
-    alignment:{vertical:"center", horizontal:align, wrapText:!!wrap},
-  };
-  if(fillRgb) s.fill = fill(fillRgb);
-  if(borderObj) s.border = borderObj;
-  return s;
-}
-function setS(ws, addr, s){ if(ws[addr]) ws[addr].s = s; }
+/* 템플릿의 데이터영역을 먼저 비움(서식은 유지) */
+function clearTemplateDataArea(tSheet, dStart, cS, cE){
+  const ref = tSheet["!ref"];
+  if(!ref) return;
+  const rng = XLSX.utils.decode_range(ref);
+  const lastRow = rng.e.r + 1;
+  const maxRow = Math.max(lastRow, dStart + 2000); // 템플릿에 데이터가 짧아도 넉넉히 비움
 
-function applyWorkbookView(wb){
-  wb.Workbook = wb.Workbook || {};
-  wb.Workbook.Views = wb.Workbook.Views || [{}];
-  wb.Workbook.Views[0].zoom = 70;
-  wb.Workbook.Views[0].showGridLines = 0;
-}
-
-/* 자동 줄바꿈 OFF는 모든 셀 alignment.wrapText=false로 강제 */
-function forceWrapOff(ws, colCount, lastRow){
-  for(let r=1;r<=lastRow;r++){
-    for(let c=1;c<=colCount;c++){
-      const a = idxToCol(c)+r;
-      if(!ws[a]) continue;
-      ws[a].s = ws[a].s || {};
-      ws[a].s.alignment = ws[a].s.alignment || {vertical:"center", horizontal:"center"};
-      ws[a].s.alignment.wrapText = false;
+  for(let r=dStart; r<=maxRow; r++){
+    for(let c=cS; c<=cE; c++){
+      const a = A(c, r);
+      const cell = tSheet[a];
+      if(!cell) continue;
+      // 값/수식만 제거 (스타일 유지)
+      delete cell.v; delete cell.w; delete cell.t; delete cell.f; delete cell.F;
     }
   }
 }
 
-/* 금액 자동 변환: "개통시간" 열은 제외 */
-function maybeNumberCell(cell){
-  if(!cell || cell.v == null) return;
-  if (typeof cell.v === "number") { cell.t="n"; cell.z="#,##0"; return; }
-  if (typeof cell.v === "string") {
-    const s = cell.v.replace(/,/g,"").trim();
-    if (/^-?\d+(\.\d+)?$/.test(s) && s.length <= 15) {
-      const n = Number(s);
-      if (Number.isFinite(n)) { cell.v=n; cell.t="n"; cell.z="#,##0"; }
-    }
-  }
-}
-function findColumnByHeaderText(ws, headerRow, colCount, targetTexts){
-  const targets = targetTexts.map(t=>String(t).replace(/\s+/g,"").toLowerCase());
-  for(let c=1;c<=colCount;c++){
-    const a = idxToCol(c)+headerRow;
-    const cell = ws[a];
-    if(!cell || cell.v==null) continue;
-    const s = String(cell.v).replace(/\s+/g,"").toLowerCase();
-    if(targets.includes(s)) return c;
-  }
-  return null;
-}
+/* source에서 그룹 행들을 읽어 template에 연속으로 값 주입 */
+function writeGroupValuesIntoTemplate(sourceSheet, tSheet, groupRows, dStart, cS, cE){
+  let rr = dStart;
+  for(const sr of groupRows){
+    for(let c=cS; c<=cE; c++){
+      const sAddr = A(c, sr);
+      const dAddr = A(c, rr);
+      const sc = sourceSheet[sAddr];
+      const vc = valueOnlyCell(sc);
+      if(!vc) continue;
 
-/* ===== 템플릿 적용 (요청사항 그대로) ===== */
-function applyTemplate(ws, colCount, headerRow, dataStart, lastRow, groupName){
-  // 행높이 20 전부
-  ws["!rows"] = Array.from({length:lastRow}, ()=>({hpt:20}));
-
-  // 병합
-  ws["!merges"] = ws["!merges"] || [];
-  // G2:I3 (G=7, I=9 / row 2~3)
-  ws["!merges"].push({ s:{r:1,c:6}, e:{r:2,c:8} });
-  // G5:I6
-  ws["!merges"].push({ s:{r:4,c:6}, e:{r:5,c:8} });
-
-  // G2 글씨/정렬/아랫줄만 double
-  const sG2 = style({bold:true, sz:20, align:"center", wrap:false, fillRgb:null, borderObj:borderBottomOnly("double","000000")});
-  // G5 노랑, 테두리 없음
-  const sG5 = style({bold:true, sz:12, align:"center", wrap:false, fillRgb:"FFFF00", borderObj:null});
-
-  // G2 셀에 값은 원본처럼(기존 값 유지) -> 건드리지 않음
-  // 다만 스타일은 병합 범위 전체에 입히자
-  for(let r=2;r<=3;r++){
-    for(let c=7;c<=9;c++){
-      const a = idxToCol(c)+r;
-      if(!ws[a]) ws[a] = {t:"s", v:""};
-      setS(ws, a, sG2);
-    }
-  }
-
-  // G5:I6 값은 그룹명 강제
-  for(let r=5;r<=6;r++){
-    for(let c=7;c<=9;c++){
-      const a = idxToCol(c)+r;
-      if(!ws[a]) ws[a] = {t:"s", v:""};
-      if(r===5 && c===7){
-        ws[a].t = "s";
-        ws[a].v = groupName || "";
-      } else {
-        // 병합 범위의 나머지 셀 값은 비워두기
-        ws[a].t = "s";
-        ws[a].v = "";
+      // 템플릿 셀 있으면 그 셀에 값만 주입(서식 유지), 없으면 새로 생성
+      if(tSheet[dAddr]){
+        tSheet[dAddr].t = vc.t;
+        tSheet[dAddr].v = vc.v;
+        if(vc.z !== undefined) tSheet[dAddr].z = vc.z;
+        // 수식 제거 보장
+        delete tSheet[dAddr].f; delete tSheet[dAddr].F;
+      }else{
+        tSheet[dAddr] = vc;
       }
-      setS(ws, a, sG5);
     }
+    rr++;
   }
 
-  // 1~8행(헤더행 제외): 옅은 회색 음영 + 테두리 없음
-  const sLight = style({bold:false, sz:10, align:"center", wrap:false, fillRgb:"F2F2F2", borderObj:null});
-  for(let r=1;r<=Math.min(8,lastRow);r++){
-    for(let c=1;c<=colCount;c++){
-      const a = idxToCol(c)+r;
-      if(!ws[a]) continue;
-      setS(ws, a, sLight);
-    }
-  }
-
-  // 9행(헤더행): 굵은 테두리(검정) + 음영 없이
-  const sHeader = style({bold:true, sz:10, align:"center", wrap:false, fillRgb:null, borderObj:borderAll("medium","000000")});
-  if(headerRow<=lastRow){
-    for(let c=1;c<=colCount;c++){
-      const a = idxToCol(c)+headerRow;
-      if(!ws[a]) continue;
-      setS(ws, a, sHeader);
-    }
-  }
-
-  // 데이터 시작행부터: 얇은 검은 테두리
-  const sData = style({bold:false, sz:10, align:"center", wrap:false, fillRgb:null, borderObj:borderAll("thin","000000")});
-  for(let r=dataStart;r<=lastRow;r++){
-    for(let c=1;c<=colCount;c++){
-      const a = idxToCol(c)+r;
-      if(!ws[a]) continue;
-      setS(ws, a, sData);
-    }
-  }
-
-  // 자동줄바꿈 OFF 강제
-  forceWrapOff(ws, colCount, lastRow);
-
-  // 개통시간 열 찾고(헤더 9행 기준), 그 열은 숫자 변환 금지
-  const openTimeCol = findColumnByHeaderText(ws, headerRow, colCount, ["개통시간","개통 시각","개통시각"]);
-  // 나머지 열은 숫자(콤마) 변환 시도
-  for(let r=dataStart;r<=lastRow;r++){
-    for(let c=1;c<=colCount;c++){
-      if(openTimeCol && c===openTimeCol) continue;
-      const a = idxToCol(c)+r;
-      if(!ws[a]) continue;
-      maybeNumberCell(ws[a]);
-    }
+  // !ref 확장 (템플릿보다 아래로 내려간 경우)
+  const ref = tSheet["!ref"];
+  if(ref){
+    const rng = XLSX.utils.decode_range(ref);
+    const outLast = Math.max(rng.e.r + 1, rr-1);
+    const outColLast = Math.max(rng.e.c + 1, cE);
+    tSheet["!ref"] = XLSX.utils.encode_range({
+      s:{c:0, r:0},
+      e:{c:outColLast-1, r:outLast-1}
+    });
   }
 }
+
+$("scanBtn").onclick=async()=>{
+  const f=$("file").files?.[0]; if(!f) return;
+  const v=validate(); if(v.errs.length){ msg(v.errs.join(" "), true); return; }
+
+  try{
+    setLoading(true, "그룹 불러오는 중");
+    $("scanBtn").disabled=true;
+    $("zipBtn").disabled=true;
+    $("allOn").disabled=true;
+    $("allOff").disabled=true;
+    $("groups").innerHTML=`<div class="row"><span class="spinner"></span><span class="muted">로딩중...</span></div>`;
+
+    // 템플릿 미리 로드(없으면 여기서 바로 에러 보여주기)
+    await ensureTemplateLoaded();
+
+    const ab=await f.arrayBuffer();
+    sourceWb = XLSX.read(ab, {type:"array", cellStyles:true, cellNF:true, cellText:false});
+    sourceSheet = sourceWb.Sheets[FIXED_SHEET];
+    if(!sourceSheet){ msg(`원본에 '${FIXED_SHEET}' 시트를 찾지 못했습니다.`, true); setLoading(false,"오류"); return; }
+
+    groupsMap.clear();
+    const gcol=colToIdx(GROUP_COL);
+    const range=XLSX.utils.decode_range(sourceSheet["!ref"]);
+    for(let r=v.dStart; r<=range.e.r+1; r++){
+      const cell = sourceSheet[A(gcol,r)];
+      const gv = cell ? String(cell.v ?? "").trim() : "";
+      if(!gv) continue;
+      if(!groupsMap.has(gv)) groupsMap.set(gv, []);
+      groupsMap.get(gv).push(r);
+    }
+
+    renderGroups();
+    const has=groupsMap.size>0;
+    $("zipBtn").disabled=!has;
+    $("allOn").disabled=!has;
+    $("allOff").disabled=!has;
+    msg(has ? `<span class="ok">그룹 로드 완료 (템플릿 사용 준비됨)</span>` : `<span class="err">그룹 데이터가 없습니다.</span>`, !has);
+    setLoading(false, has ? "대기" : "오류");
+  }catch(e){
+    console.error(e);
+    msg(`오류: ${e.message || e}`, true);
+    setLoading(false, "오류");
+  }finally{
+    $("scanBtn").disabled=false;
+  }
+};
 
 $("zipBtn").onclick=async()=>{
   const v=validate();
   if(v.errs.length){ msg(v.errs.join(" "), true); return; }
-  if(!sheet || groupsMap.size===0){ msg("먼저 그룹 불러오기를 실행하세요.", true); return; }
+  if(!sourceSheet || groupsMap.size===0){ msg("먼저 그룹 불러오기를 실행하세요.", true); return; }
 
   const selected=[...document.querySelectorAll("#groups input[type=checkbox]:checked")]
     .map(cb=>decodeURIComponent(cb.dataset.g));
@@ -435,52 +354,25 @@ $("zipBtn").onclick=async()=>{
   try{
     setLoading(true, "ZIP 생성 중");
     $("zipBtn").disabled=true;
+
+    const base = await ensureTemplateLoaded();
     const zip = new JSZip();
 
     for(let i=0;i<selected.length;i++){
       const group = selected[i];
       const rows = groupsMap.get(group) || [];
 
-      const out = {};
-      const outColCount = (v.cE - v.cS + 1);
+      // 템플릿 워크북을 복제
+      const wb2 = deepClone(base);
+      const tSheet = wb2.Sheets[FIXED_SHEET];
 
-      // 헤더 1~headerEnd(=9)
-      for(let r=1; r<=v.headerEnd; r++){
-        for(let c=v.cS; c<=v.cE; c++){
-          const srcA = A(c,r);
-          const dstA = A(c - v.cS + 1, r);
-          copyValue(sheet, out, srcA, dstA);
-        }
-      }
+      // 템플릿 데이터영역 초기화 후 그룹값 주입
+      clearTemplateDataArea(tSheet, v.dStart, v.cS, v.cE);
+      writeGroupValuesIntoTemplate(sourceSheet, tSheet, rows, v.dStart, v.cS, v.cE);
 
-      // 데이터: 그룹행만 연속
-      let rr = v.dataStart;
-      for(const sr of rows){
-        for(let c=v.cS; c<=v.cE; c++){
-          const srcA = A(c,sr);
-          const dstA = A(c - v.cS + 1, rr);
-          copyValue(sheet, out, srcA, dstA);
-        }
-        rr++;
-      }
-
-      const outLastRow = Math.max(v.headerEnd, rr-1);
-
-      out["!ref"] = XLSX.utils.encode_range({
-        s:{c:0,r:0},
-        e:{c:outColCount-1, r:outLastRow-1}
-      });
-
-      // 템플릿 적용
-      applyTemplate(out, outColCount, v.headerEnd, v.dataStart, outLastRow, group);
-
-      // 워크북 생성 + 보기설정
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, out, FIXED_SHEET);
-      applyWorkbookView(wb);
-
+      // 저장
       const fname = `${v.month} (주)수석네트웍스_${safeFilePart(group)}.xlsx`;
-      const bytes = XLSX.write(wb, { type:"array", bookType:"xlsx", cellStyles:true });
+      const bytes = XLSX.write(wb2, { type:"array", bookType:"xlsx", cellStyles:true });
       zip.file(fname, bytes);
 
       $("status").textContent = `ZIP 생성 중 (${i+1}/${selected.length})`;
@@ -499,7 +391,7 @@ $("zipBtn").onclick=async()=>{
     setLoading(false, "완료");
   }catch(e){
     console.error(e);
-    msg("ZIP 생성 오류(콘솔 확인)", true);
+    msg(`ZIP 생성 오류: ${e.message || e}`, true);
     setLoading(false, "오류");
   }finally{
     $("zipBtn").disabled=false;
