@@ -5,9 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>정산 분리툴</title>
 
-  <!-- xlsx-js-style (스타일/병합/메타 최대 보존) -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
-  <!-- JSZip -->
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 
   <style>
@@ -47,7 +45,6 @@
 <body>
 <div class="wrap">
 
-  <!-- LOCK -->
   <div id="lock" class="card">
     <div class="topbar">
       <h1>정산 분리툴 🔐</h1>
@@ -64,7 +61,6 @@
     <div id="libMsg" class="muted" style="margin-top:8px"></div>
   </div>
 
-  <!-- APP -->
   <div id="app" class="card" style="display:none">
     <div class="topbar">
       <h1>정산리스트 그룹 분리 🧾</h1>
@@ -94,7 +90,7 @@
 
         <div id="appMsg" class="muted" style="margin-top:10px"></div>
         <div class="muted" style="margin-top:6px">
-          템플릿 기반: repo의 <b>template.xlsx</b> 서식을 그대로 사용하고, 지정한 데이터 범위만 <b>값으로 주입</b>합니다.
+          템플릿(template.xlsx) 서식을 유지하기 위해 데이터 영역 셀을 “서식 포함”으로 강제 생성한 뒤 값만 주입합니다.
         </div>
       </div>
 
@@ -118,12 +114,10 @@
 </div>
 
 <script>
-/* ====== 고정 설정 ====== */
 const PASSWORD = "ss315696ss";
 const FIXED_SHEET = "정산리스트";
 const GROUP_COL = "B";
-const TEMPLATE_URL = "./template.xlsx"; // repo 루트에 업로드
-
+const TEMPLATE_URL = "./template.xlsx";
 const $ = id => document.getElementById(id);
 
 function setLoading(on, text){
@@ -139,7 +133,6 @@ function msg(html, isErr=false){
   $("libMsg").innerHTML = ok ? `<span class="ok">라이브러리 로드 완료</span>` : `<span class="err">라이브러리 로드 실패 (새로고침)</span>`;
 })();
 
-/* ====== 비번 ====== */
 $("enterBtn").onclick = () => {
   $("lockMsg").textContent = "";
   if ($("pw").value !== PASSWORD) { $("lockMsg").textContent = "비밀번호가 틀렸습니다."; return; }
@@ -149,14 +142,12 @@ $("enterBtn").onclick = () => {
 };
 $("pw").addEventListener("keydown", e => { if(e.key==="Enter") $("enterBtn").click(); });
 
-/* ====== 상태 변수 ====== */
 let sourceSheet=null, groupsMap=new Map();
 
-// ✅ 템플릿 바이너리 캐시(서식 보존 핵심)
+// template binary cache
 let templateAB = null;
 let templateChecked = false;
 
-/* ====== 유틸 ====== */
 function colToIdx(c){
   let n=0; c=String(c||"").toUpperCase().trim();
   if(!/^[A-Z]+$/.test(c)) return null;
@@ -217,22 +208,19 @@ $("file").onchange=()=>{
   sourceSheet=null; groupsMap=new Map();
 };
 
-/* ====== 템플릿 로드(바이너리 캐시) ====== */
 async function ensureTemplateLoaded(){
   if(templateAB && templateChecked) return;
 
   const res = await fetch(TEMPLATE_URL, { cache: "no-store" });
   if(!res.ok) throw new Error(`template.xlsx 로드 실패: ${res.status}`);
-
   templateAB = await res.arrayBuffer();
 
-  // 템플릿 내부 시트 존재 1회 체크
   const tmp = XLSX.read(templateAB, { type:"array", cellStyles:true, cellNF:true, cellText:false });
   if(!tmp.Sheets?.[FIXED_SHEET]) throw new Error(`템플릿에 '${FIXED_SHEET}' 시트가 없습니다.`);
   templateChecked = true;
 }
 
-/* ====== 값만 추출(수식 제거, 보이는 값 우선) ====== */
+// 값만(수식 제거). 수식 셀은 w(표시값)이 있으면 문자열로라도 가져옴.
 function valueOnlyCell(sc){
   if(!sc) return null;
   let v = sc.v;
@@ -240,7 +228,6 @@ function valueOnlyCell(sc){
   let z = sc.z;
 
   if (v === undefined || v === null) {
-    // w(표시값)이라도 있으면 문자열로
     if (sc.w != null && String(sc.w).length) { v = String(sc.w); t = "s"; }
     else return null;
   }
@@ -250,27 +237,47 @@ function valueOnlyCell(sc){
   return out;
 }
 
-/* ====== 템플릿 데이터 영역 값만 지우기(서식/병합 유지) ====== */
-function clearTemplateDataArea(tSheet, dStart, cS, cE){
+/**
+ * ⭐ 핵심: “템플릿 데이터 영역”을 셀 객체로 강제 생성해 서식이 저장되도록 함.
+ * - 각 컬럼별로 기준 스타일을 하나 뽑아(colStyleByCol): 보통 템플릿의 dataStart행 셀 스타일
+ * - 템플릿에 셀이 없는 주소도 빈 문자열 셀을 만들고(s 포함) 유지
+ * - 값은 이후 write 단계에서 덮어씀
+ */
+function materializeTemplateCells(tSheet, dStart, cS, cE){
   const ref = tSheet["!ref"];
   if(!ref) return;
 
   const rng = XLSX.utils.decode_range(ref);
   const lastRow = rng.e.r + 1;
 
-  // 템플릿이 데이터영역을 충분히 포함하는 걸 가정
-  // 그래도 넉넉히(템플릿 범위 내)만 지움
+  // 컬럼별 기본 스타일 수집(템플릿의 dataStart 행 기준)
+  const colStyle = new Map();
+  for(let c=cS;c<=cE;c++){
+    const a = A(c, dStart);
+    const cell = tSheet[a];
+    if(cell && cell.s) colStyle.set(c, cell.s);
+  }
+
+  // 데이터영역 전체를 “빈 값 셀”로 보장 (서식 유지 목적)
   for(let r=dStart; r<=lastRow; r++){
     for(let c=cS; c<=cE; c++){
       const a = A(c, r);
-      const cell = tSheet[a];
-      if(!cell) continue;
-      delete cell.v; delete cell.w; delete cell.t; delete cell.f; delete cell.F;
+      if(!tSheet[a]){
+        // 셀 객체 없으면 생성 + 스타일(가능하면 컬럼 기준) 부여
+        tSheet[a] = { t:"s", v:"" };
+        const s = colStyle.get(c);
+        if(s) tSheet[a].s = s;
+      } else {
+        // 기존 셀 있으면 값만 비움(스타일은 건드리지 않음)
+        tSheet[a].t = "s";
+        tSheet[a].v = "";
+        delete tSheet[a].f; delete tSheet[a].F;
+      }
     }
   }
 }
 
-/* ====== 그룹행만 연속으로 템플릿에 값 주입 ====== */
+/** 값 주입: 템플릿 셀에 값만 덮어쓰기(스타일 유지) */
 function writeGroupValuesIntoTemplate(sourceSheet, tSheet, groupRows, dStart, cS, cE){
   let rr = dStart;
 
@@ -282,20 +289,19 @@ function writeGroupValuesIntoTemplate(sourceSheet, tSheet, groupRows, dStart, cS
       const vc = valueOnlyCell(sourceSheet[sAddr]);
       if(!vc) continue;
 
-      if(tSheet[dAddr]){
-        tSheet[dAddr].t = vc.t;
-        tSheet[dAddr].v = vc.v;
-        if(vc.z !== undefined) tSheet[dAddr].z = vc.z;
-        delete tSheet[dAddr].f; delete tSheet[dAddr].F;
-      }else{
-        tSheet[dAddr] = vc;
-      }
+      // 템플릿 셀은 materialize로 이미 존재하는게 원칙
+      if(!tSheet[dAddr]) tSheet[dAddr] = { t:"s", v:"" };
+
+      tSheet[dAddr].t = vc.t;
+      tSheet[dAddr].v = vc.v;
+      if(vc.z !== undefined) tSheet[dAddr].z = vc.z;
+
+      delete tSheet[dAddr].f; delete tSheet[dAddr].F;
     }
     rr++;
   }
 
-  // !ref가 템플릿에 이미 충분히 잡혀있을 확률이 높지만,
-  // 혹시 모자라면 아래로 확장
+  // ref 확장(혹시 템플릿보다 데이터가 길어지는 경우)
   const ref = tSheet["!ref"];
   if(ref){
     const rng = XLSX.utils.decode_range(ref);
@@ -308,7 +314,6 @@ function writeGroupValuesIntoTemplate(sourceSheet, tSheet, groupRows, dStart, cS
   }
 }
 
-/* ====== 그룹 스캔 ====== */
 $("scanBtn").onclick=async()=>{
   const f=$("file").files?.[0]; if(!f) return;
   const v=validate(); if(v.errs.length){ msg(v.errs.join(" "), true); return; }
@@ -321,7 +326,6 @@ $("scanBtn").onclick=async()=>{
     $("allOff").disabled=true;
     $("groups").innerHTML=`<div class="row"><span class="spinner"></span><span class="muted">로딩중...</span></div>`;
 
-    // 템플릿 미리 체크(없으면 즉시 에러)
     await ensureTemplateLoaded();
 
     const ab=await f.arrayBuffer();
@@ -348,7 +352,7 @@ $("scanBtn").onclick=async()=>{
     $("allOn").disabled=!has;
     $("allOff").disabled=!has;
 
-    msg(has ? `<span class="ok">그룹 로드 완료 (template.xlsx 서식 사용)</span>` : `<span class="err">그룹 데이터가 없습니다.</span>`, !has);
+    msg(has ? `<span class="ok">그룹 로드 완료 (template.xlsx 서식 유지 방식)</span>` : `<span class="err">그룹 데이터가 없습니다.</span>`, !has);
     setLoading(false, has ? "대기" : "오류");
   }catch(e){
     console.error(e);
@@ -359,7 +363,6 @@ $("scanBtn").onclick=async()=>{
   }
 };
 
-/* ====== ZIP 생성 ====== */
 $("zipBtn").onclick=async()=>{
   const v=validate();
   if(v.errs.length){ msg(v.errs.join(" "), true); return; }
@@ -380,12 +383,14 @@ $("zipBtn").onclick=async()=>{
       const group = selected[i];
       const rows = groupsMap.get(group) || [];
 
-      // ✅ 그룹마다 템플릿을 새로 읽기(서식/병합/열너비/행높이 보존 핵심)
+      // 그룹마다 템플릿 새로 read (서식/병합/메타 유지)
       const wb2 = XLSX.read(templateAB, { type:"array", cellStyles:true, cellNF:true, cellText:false });
       const tSheet = wb2.Sheets[FIXED_SHEET];
 
-      // 템플릿 데이터 영역 값만 초기화 후 주입
-      clearTemplateDataArea(tSheet, v.dStart, v.cS, v.cE);
+      // ✅ 서식 유지 핵심: 데이터 영역을 “셀 객체로 강제 생성”
+      materializeTemplateCells(tSheet, v.dStart, v.cS, v.cE);
+
+      // 값만 주입
       writeGroupValuesIntoTemplate(sourceSheet, tSheet, rows, v.dStart, v.cS, v.cE);
 
       const fname = `${v.month} (주)수석네트웍스_${safeFilePart(group)}.xlsx`;
