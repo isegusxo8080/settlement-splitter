@@ -5,15 +5,17 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>정산 분리툴</title>
 
-  <!-- SheetJS + JSZip -->
-  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.19.3/dist/xlsx.full.min.js"></script>
+  <!-- SheetJS (official CDN) + shim -->
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/shim.min.js"></script>
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+  <!-- JSZip -->
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 
   <style>
     :root {
       --bg:#0b0f17; --card:#121a27; --line:#223044;
       --text:#e8eef8; --muted:#a8b3c7;
-      --btn:#2b66ff; --btn2:#1c2a3f; --bad:#ff4d4d;
+      --btn:#2b66ff; --btn2:#1c2a3f; --bad:#ff4d4d; --ok:#7CFFAE;
     }
     *{box-sizing:border-box}
     body{
@@ -30,7 +32,7 @@
       padding:18px 16px;
       box-shadow:0 12px 32px rgba(0,0,0,.25)
     }
-    h1{font-size:18px;margin:0 0 14px}
+    h1{font-size:18px;margin:0}
     .muted{color:var(--muted);font-size:13px}
     .row{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end}
     .field{display:flex;flex-direction:column;gap:6px}
@@ -42,23 +44,46 @@
     input[type="file"]{color:var(--muted)}
     button{
       border:0;border-radius:10px;padding:10px 12px;
-      font-weight:700;color:white;background:var(--btn);cursor:pointer
+      font-weight:800;color:white;background:var(--btn);
+      cursor:pointer;
+      transition:transform .06s ease, filter .12s ease, opacity .12s ease;
+      box-shadow:0 10px 22px rgba(43,102,255,.16);
     }
+    button:hover{filter:brightness(1.05)}
+    button:active{transform:translateY(1px); filter:brightness(.98)}
     button.secondary{
-      background:var(--btn2);color:var(--text);border:1px solid var(--line)
+      background:var(--btn2);color:var(--text);
+      border:1px solid var(--line);
+      box-shadow:none;
     }
-    button:disabled{opacity:.5;cursor:not-allowed}
+    button:disabled{opacity:.45;cursor:not-allowed;transform:none;filter:none}
     .split{display:grid;grid-template-columns:1fr;gap:12px}
     @media (min-width:860px){.split{grid-template-columns:1.1fr .9fr}}
     .box{border:1px solid var(--line);border-radius:12px;padding:12px;background:#0e1522}
     .groupList{max-height:360px;overflow:auto}
-    .gitem{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px dashed #223044}
+    .gitem{display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px dashed rgba(34,48,68,.7)}
     .gitem:last-child{border-bottom:none}
     .badge{font-size:12px;color:var(--muted)}
-    .err{color:var(--bad);font-weight:700}
-    .ok{color:#7CFFAE;font-weight:700}
+    .err{color:var(--bad);font-weight:800}
+    .ok{color:var(--ok);font-weight:800}
     .topbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
     .hr{height:1px;background:var(--line);margin:12px 0}
+
+    /* loader */
+    .loaderWrap{display:flex;gap:10px;align-items:center;padding:10px 0}
+    .spinner{
+      width:18px;height:18px;border-radius:50%;
+      border:2px solid rgba(168,179,199,.35);
+      border-top-color: rgba(232,238,248,.9);
+      animation:spin .75s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .pill{
+      display:inline-flex; align-items:center; gap:8px;
+      padding:6px 10px; border-radius:999px;
+      border:1px solid var(--line); background:rgba(14,21,34,.8);
+      color:var(--muted); font-size:12px;
+    }
   </style>
 </head>
 
@@ -81,29 +106,30 @@
     </div>
 
     <div id="lockMsg" class="err" style="margin-top:10px"></div>
+    <div id="libMsg" class="muted" style="margin-top:8px"></div>
   </div>
 
   <!-- APP -->
   <div id="app" class="card" style="display:none">
     <div class="topbar">
       <h1>정산리스트 그룹 분리 🧾</h1>
-      <div class="badge" id="status">대기</div>
+      <div class="pill" id="statusPill"><span class="spinner" style="display:none"></span><span id="status">대기</span></div>
     </div>
 
     <div class="split">
       <div class="box">
         <div class="row">
           <div class="field">
-            <label>월</label>
+            <label>월 (예: 11월)</label>
             <input id="month" value="11월" />
           </div>
           <div class="field">
             <label>양식 끝 행</label>
-            <input id="headerEnd" type="number" value="9" />
+            <input id="headerEnd" type="number" value="9" min="1" />
           </div>
           <div class="field">
             <label>데이터 시작 행</label>
-            <input id="dataStart" type="number" value="10" />
+            <input id="dataStart" type="number" value="10" min="1" />
           </div>
           <div class="field">
             <label>열 시작</label>
@@ -118,19 +144,25 @@
         <div class="hr"></div>
 
         <div class="row">
-          <input id="file" type="file" accept=".xlsx" />
+          <div class="field" style="min-width:260px">
+            <label>정산 엑셀 업로드 (.xlsx)</label>
+            <input id="file" type="file" accept=".xlsx" />
+          </div>
           <button id="scanBtn" class="secondary" disabled>그룹 불러오기</button>
           <button id="zipBtn" disabled>ZIP 생성</button>
         </div>
 
-        <div id="appMsg" class="muted" style="margin-top:8px"></div>
+        <div id="appMsg" class="muted" style="margin-top:10px"></div>
+        <div class="muted" style="margin-top:6px">
+          고정값: 시트명 <b>정산리스트</b>, 그룹열 <b>B</b> / 파일명: <b>N월 (주)수석네트웍스_(그룹명).xlsx</b>
+        </div>
       </div>
 
       <div class="box">
         <div class="row" style="justify-content:space-between">
           <div>
             <b>그룹 선택</b>
-            <div id="groupCount" class="muted">업로드 필요</div>
+            <div id="groupCount" class="muted">업로드 후 그룹을 불러오세요.</div>
           </div>
           <div class="row">
             <button id="allOn" class="secondary" disabled>전체선택</button>
@@ -138,6 +170,7 @@
           </div>
         </div>
         <div class="hr"></div>
+
         <div id="groups" class="groupList"></div>
       </div>
     </div>
@@ -146,12 +179,31 @@
 </div>
 
 <script>
-/* ===== 비밀번호 (직접 비교) ===== */
+/* ===== 설정 ===== */
 const PASSWORD = "ss315696ss";
 const FIXED_SHEET = "정산리스트";
 const GROUP_COL = "B";
 const $ = id => document.getElementById(id);
 
+/* ===== 상태/로딩 표시 ===== */
+function setLoading(on, text){
+  const sp = $("statusPill").querySelector(".spinner");
+  sp.style.display = on ? "inline-block" : "none";
+  $("status").textContent = text || (on ? "처리중" : "대기");
+}
+function showMsg(html, isErr=false){
+  $("appMsg").innerHTML = isErr ? `<span class="err">${html}</span>` : html;
+}
+
+/* ===== 라이브러리 로드 체크 ===== */
+(function checkLibs(){
+  const ok = (typeof XLSX !== "undefined") && (typeof JSZip !== "undefined");
+  $("libMsg").innerHTML = ok
+    ? `<span class="ok">라이브러리 로드 완료</span>`
+    : `<span class="err">라이브러리 로드 실패: 페이지 새로고침(F5) 후 다시 시도해줘.</span>`;
+})();
+
+/* ===== 비밀번호 ===== */
 $("enterBtn").onclick = () => {
   $("lockMsg").textContent = "";
   if ($("pw").value !== PASSWORD) {
@@ -160,8 +212,8 @@ $("enterBtn").onclick = () => {
   }
   $("lock").style.display = "none";
   $("app").style.display = "block";
+  setLoading(false, "대기");
 };
-
 $("pw").addEventListener("keydown", e => {
   if (e.key === "Enter") $("enterBtn").click();
 });
@@ -170,96 +222,219 @@ $("pw").addEventListener("keydown", e => {
 let workbook, sheet, groupsMap = new Map();
 
 function colToIdx(c){
-  let n=0; c=c.toUpperCase();
+  let n=0; c=String(c||"").toUpperCase().trim();
+  if(!/^[A-Z]+$/.test(c)) return null;
   for(let i=0;i<c.length;i++) n=n*26+(c.charCodeAt(i)-64);
   return n;
 }
-function addr(c,r){
-  let s=""; while(c){let m=(c-1)%26;s=String.fromCharCode(65+m)+s;c=(c-1)/26|0}
-  return s+r;
+function idxToCol(n){
+  let s=""; while(n){let m=(n-1)%26; s=String.fromCharCode(65+m)+s; n=((n-1)/26)|0}
+  return s;
 }
+function addr(c,r){ return idxToCol(c) + r; }
 
-$("file").onchange = () => {
-  $("scanBtn").disabled = !$("file").files[0];
-};
-
-$("scanBtn").onclick = async () => {
-  const f = $("file").files[0];
-  const ab = await f.arrayBuffer();
-  workbook = XLSX.read(ab, {type:"array", cellStyles:true});
-  sheet = workbook.Sheets[FIXED_SHEET];
-  if (!sheet) { alert("정산리스트 시트 없음"); return; }
-
-  groupsMap.clear();
-  const start = +$("dataStart").value;
-  const gcol = colToIdx(GROUP_COL);
-  const range = XLSX.utils.decode_range(sheet["!ref"]);
-
-  for(let r=start;r<=range.e.r+1;r++){
-    const v = sheet[addr(gcol,r)]?.v;
-    if(!v) continue;
-    if(!groupsMap.has(v)) groupsMap.set(v,[]);
-    groupsMap.get(v).push(r);
-  }
-
-  const root = $("groups"); root.innerHTML="";
-  [...groupsMap.keys()].sort().forEach(g=>{
-    root.innerHTML += `<div class="gitem">
-      <input type="checkbox" checked data-g="${g}"/> ${g}
-    </div>`;
-  });
-
-  $("groupCount").textContent = `총 ${groupsMap.size}개`;
-  $("zipBtn").disabled = false;
-  $("allOn").disabled = false;
-  $("allOff").disabled = false;
-};
-
-$("allOn").onclick = ()=>document.querySelectorAll("#groups input").forEach(x=>x.checked=true);
-$("allOff").onclick = ()=>document.querySelectorAll("#groups input").forEach(x=>x.checked=false);
-
-$("zipBtn").onclick = async () => {
-  const zip = new JSZip();
-  const month = $("month").value;
-  const hEnd = +$("headerEnd").value;
-  const dStart = +$("dataStart").value;
+function validateInputs(){
+  const month = $("month").value.trim();
+  const hEnd = Number($("headerEnd").value);
+  const dStart = Number($("dataStart").value);
   const cS = colToIdx($("colStart").value);
   const cE = colToIdx($("colEnd").value);
 
-  document.querySelectorAll("#groups input:checked").forEach(cb=>{
-    const g = cb.dataset.g;
-    const rows = groupsMap.get(g);
-    const out = {};
+  const errs = [];
+  if(!month) errs.push("월이 비었습니다.");
+  if(!Number.isFinite(hEnd) || hEnd < 1) errs.push("양식 끝 행이 이상합니다.");
+  if(!Number.isFinite(dStart) || dStart < 1) errs.push("데이터 시작 행이 이상합니다.");
+  if(Number.isFinite(hEnd) && Number.isFinite(dStart) && hEnd >= dStart) errs.push("양식 끝 행은 데이터 시작 행보다 작아야 합니다.");
+  if(!cS) errs.push("열 시작이 이상합니다. 예: A");
+  if(!cE) errs.push("열 끝이 이상합니다. 예: CD");
+  if(cS && cE && cS > cE) errs.push("열 시작이 열 끝보다 뒤입니다.");
 
-    for(let r=1;r<=hEnd;r++)
-      for(let c=cS;c<=cE;c++)
-        if(sheet[addr(c,r)])
-          out[addr(c-cS+1,r)] = {...sheet[addr(c,r)]};
+  return { month, hEnd, dStart, cS, cE, errs };
+}
 
-    let rr=dStart;
-    rows.forEach(sr=>{
-      for(let c=cS;c<=cE;c++)
-        if(sheet[addr(c,sr)])
-          out[addr(c-cS+1,rr)] = {...sheet[addr(c,sr)]};
-      rr++;
-    });
+function renderLoadingGroups(text){
+  $("groups").innerHTML = `
+    <div class="loaderWrap">
+      <div class="spinner"></div>
+      <div class="muted">${text || "로딩중..."}</div>
+    </div>
+  `;
+}
 
-    out["!ref"] = XLSX.utils.encode_range({
-      s:{c:0,r:0},
-      e:{c:cE-cS,r:rr-1}
-    });
-
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb,out,FIXED_SHEET);
-    zip.file(`${month} (주)수석네트웍스_${g}.xlsx`,
-      XLSX.write(wb,{type:"array",bookType:"xlsx"}));
+function renderGroups(){
+  const root = $("groups");
+  root.innerHTML = "";
+  const keys = [...groupsMap.keys()].sort((a,b)=>String(a).localeCompare(String(b),"ko"));
+  keys.forEach(g=>{
+    const safe = encodeURIComponent(g);
+    const div = document.createElement("div");
+    div.className = "gitem";
+    div.innerHTML = `<input type="checkbox" checked data-g="${safe}"/><span>${g}</span>`;
+    root.appendChild(div);
   });
+  $("groupCount").textContent = `그룹 ${keys.length}개`;
+}
 
-  const blob = await zip.generateAsync({type:"blob"});
-  const a=document.createElement("a");
-  a.href=URL.createObjectURL(blob);
-  a.download=`${$("month").value} (주)수석네트웍스_정산서.zip`;
-  a.click();
+$("file").onchange = () => {
+  const ok = !!$("file").files[0];
+  $("scanBtn").disabled = !ok;
+  $("zipBtn").disabled = true;
+  $("allOn").disabled = true;
+  $("allOff").disabled = true;
+  $("groupCount").textContent = "업로드 후 그룹을 불러오세요.";
+  $("groups").innerHTML = "";
+  showMsg("");
+  workbook = null; sheet = null; groupsMap = new Map();
+};
+
+$("allOn").onclick = ()=>document.querySelectorAll("#groups input[type=checkbox]").forEach(x=>x.checked=true);
+$("allOff").onclick = ()=>document.querySelectorAll("#groups input[type=checkbox]").forEach(x=>x.checked=false);
+
+$("scanBtn").onclick = async () => {
+  if (typeof XLSX === "undefined") { showMsg("XLSX 로드 실패입니다. 새로고침 후 다시 시도해주세요.", true); return; }
+
+  const f = $("file").files[0];
+  if(!f) return;
+
+  const v = validateInputs();
+  if(v.errs.length){ showMsg(v.errs.join(" "), true); return; }
+
+  try{
+    setLoading(true, "그룹 불러오는 중");
+    $("scanBtn").disabled = true;
+    $("zipBtn").disabled = true;
+    $("allOn").disabled = true;
+    $("allOff").disabled = true;
+    renderLoadingGroups("그룹 불러오는 중...");
+
+    const ab = await f.arrayBuffer();
+    workbook = XLSX.read(ab, {type:"array", cellStyles:true, cellNF:true, cellText:false});
+    sheet = workbook.Sheets[FIXED_SHEET];
+    if(!sheet){
+      renderLoadingGroups("");
+      showMsg(`'${FIXED_SHEET}' 시트를 찾지 못했습니다.`, true);
+      setLoading(false, "오류");
+      return;
+    }
+
+    groupsMap.clear();
+    const gcol = colToIdx(GROUP_COL);
+    const range = XLSX.utils.decode_range(sheet["!ref"]);
+    for(let r=v.dStart; r<=range.e.r+1; r++){
+      const cell = sheet[addr(gcol, r)];
+      const gv = cell ? String(cell.v ?? "").trim() : "";
+      if(!gv) continue;
+      if(!groupsMap.has(gv)) groupsMap.set(gv, []);
+      groupsMap.get(gv).push(r);
+    }
+
+    renderGroups();
+    const has = groupsMap.size > 0;
+    $("zipBtn").disabled = !has;
+    $("allOn").disabled = !has;
+    $("allOff").disabled = !has;
+
+    showMsg(has ? `<span class="ok">그룹 로드 완료. 필요한 그룹만 체크하고 ZIP 생성 누르면 됩니다.</span>`
+                : `<span class="err">데이터 시작 행부터 그룹(B열)이 한 건도 없습니다.</span>`, !has);
+
+    setLoading(false, has ? "대기" : "오류");
+  }catch(e){
+    console.error(e);
+    renderLoadingGroups("");
+    showMsg("그룹 불러오기 중 오류가 발생했습니다. (콘솔 확인)", true);
+    setLoading(false, "오류");
+  }finally{
+    $("scanBtn").disabled = false;
+  }
+};
+
+function safeFilePart(s){
+  return String(s ?? "").trim()
+    .replace(/[\\\/:*?"<>|]/g, "_")
+    .replace(/\s+/g, " ")
+    .trim() || "그룹없음";
+}
+
+function copyCell(src, dst, sAddr, dAddr){
+  const c = src[sAddr];
+  if(!c) return;
+  dst[dAddr] = {...c};
+}
+
+$("zipBtn").onclick = async () => {
+  if (typeof XLSX === "undefined" || typeof JSZip === "undefined") {
+    showMsg("라이브러리 로드 실패입니다. 새로고침 후 다시 시도해주세요.", true);
+    return;
+  }
+
+  const v = validateInputs();
+  if(v.errs.length){ showMsg(v.errs.join(" "), true); return; }
+  if(!sheet || groupsMap.size === 0){ showMsg("먼저 그룹 불러오기를 실행해주세요.", true); return; }
+
+  const selected = [...document.querySelectorAll("#groups input[type=checkbox]:checked")]
+    .map(cb => decodeURIComponent(cb.dataset.g));
+
+  if(selected.length === 0){ showMsg("선택된 그룹이 없습니다.", true); return; }
+
+  try{
+    setLoading(true, "ZIP 생성 중");
+    $("zipBtn").disabled = true;
+
+    const zip = new JSZip();
+
+    for(let i=0;i<selected.length;i++){
+      const g = selected[i];
+      const rows = groupsMap.get(g) || [];
+      const out = {};
+
+      // 1) 양식(1~hEnd) 복사
+      for(let r=1; r<=v.hEnd; r++){
+        for(let c=v.cS; c<=v.cE; c++){
+          copyCell(sheet, out, addr(c,r), addr(c - v.cS + 1, r));
+        }
+      }
+
+      // 2) 데이터(그룹 행) 복사 -> dataStart부터 연속
+      let rr = v.dStart;
+      for(const sr of rows){
+        for(let c=v.cS; c<=v.cE; c++){
+          copyCell(sheet, out, addr(c,sr), addr(c - v.cS + 1, rr));
+        }
+        rr++;
+      }
+
+      // 범위 설정
+      const lastRow = Math.max(v.hEnd, rr-1);
+      out["!ref"] = XLSX.utils.encode_range({ s:{c:0,r:0}, e:{c:(v.cE - v.cS), r:(lastRow-1)} });
+
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, out, FIXED_SHEET);
+
+      const fname = `${v.month} (주)수석네트웍스_${safeFilePart(g)}.xlsx`;
+      const bytes = XLSX.write(wb, {type:"array", bookType:"xlsx"});
+      zip.file(fname, bytes);
+
+      $("status").textContent = `ZIP 생성 중 (${i+1}/${selected.length})`;
+    }
+
+    const blob = await zip.generateAsync({type:"blob"});
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `${v.month} (주)수석네트웍스_정산서.zip`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(a.href);
+
+    showMsg(`<span class="ok">ZIP 다운로드가 시작됐습니다.</span>`);
+    setLoading(false, "완료");
+  }catch(e){
+    console.error(e);
+    showMsg("ZIP 생성 중 오류가 발생했습니다. (콘솔 확인)", true);
+    setLoading(false, "오류");
+  }finally{
+    $("zipBtn").disabled = false;
+  }
 };
 </script>
 </body>
