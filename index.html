@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>정산 분리툴</title>
 
-  <!-- xlsx-js-style (스타일 저장 지원) -->
+  <!-- xlsx-js-style (스타일 저장) -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
   <!-- JSZip -->
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
@@ -49,7 +49,6 @@
 <body>
 <div class="wrap">
 
-  <!-- LOCK -->
   <div id="lock" class="card">
     <div class="topbar">
       <h1>정산 분리툴 🔐</h1>
@@ -66,7 +65,6 @@
     <div id="libMsg" class="muted" style="margin-top:8px"></div>
   </div>
 
-  <!-- APP -->
   <div id="app" class="card" style="display:none">
     <div class="topbar">
       <h1>정산리스트 그룹 분리 🧾</h1>
@@ -80,7 +78,7 @@
           <div class="field"><label>양식 끝 행</label><input id="headerEnd" type="number" value="9" min="1" /></div>
           <div class="field"><label>데이터 시작 행</label><input id="dataStart" type="number" value="10" min="1" /></div>
           <div class="field"><label>열 시작</label><input id="colStart" value="A" /></div>
-          <div class="field"><label>열 끝</label><input id="colEnd" value="CD" /></div>
+          <div class="field"><label>열 끝</label><input id="colEnd" value="AZ" /></div>
         </div>
 
         <div class="hr"></div>
@@ -96,8 +94,8 @@
 
         <div class="row" style="margin-top:10px">
           <div class="chk">
-            <input id="applyStyle" type="checkbox" checked />
-            <label for="applyStyle" style="margin:0">출력파일에 “툴 고유 서식(테두리/음영/폰트)” 적용</label>
+            <input id="sooseokStyle" type="checkbox" checked />
+            <label for="sooseokStyle" style="margin:0">수석네트웍스 템플릿 서식 적용(병합/테두리/음영)</label>
           </div>
           <div class="chk">
             <input id="valueOnly" type="checkbox" checked />
@@ -107,8 +105,8 @@
 
         <div id="appMsg" class="muted" style="margin-top:10px"></div>
         <div class="muted" style="margin-top:6px">
-          고정값: 시트명 <b>정산리스트</b>, 그룹열 <b>B</b> / 파일명: <b>N월 (주)수석네트웍스_(그룹명).xlsx</b><br/>
-          방식: <b>선택 그룹 행만 뽑아서 새 파일 생성</b> (숨김/삭제 안함)
+          행높이: <b>전부 20</b> / 확대: <b>70%</b> / 눈금선: <b>OFF</b><br/>
+          방식: 선택 그룹 행만 뽑아 <b>새 파일 생성</b>
         </div>
       </div>
 
@@ -182,7 +180,7 @@ function validate(){
   if(!Number.isFinite(dStart)||dStart<1) errs.push("데이터 시작 행이 이상합니다.");
   if(Number.isFinite(hEnd)&&Number.isFinite(dStart)&&hEnd>=dStart) errs.push("양식 끝 행은 데이터 시작 행보다 작아야 합니다.");
   if(!cS) errs.push("열 시작이 이상합니다. 예: A");
-  if(!cE) errs.push("열 끝이 이상합니다. 예: CD");
+  if(!cE) errs.push("열 끝이 이상합니다. 예: AZ");
   if(cS&&cE&&cS>cE) errs.push("열 시작이 열 끝보다 뒤입니다.");
   return {month,hEnd,dStart,cS,cE,errs};
 }
@@ -268,27 +266,18 @@ function safeFilePart(s){
 /* ===== 값만 남기기(수식 제거) ===== */
 function valueOnlyCell(sc){
   if(!sc) return null;
-
-  // 원본 표시값 우선: v가 없으면 w를 문자열 값으로
   let v = sc.v;
   let t = sc.t;
   let z = sc.z;
 
   if (v === undefined || v === null) {
-    if (sc.w != null && String(sc.w).length) {
-      v = String(sc.w);
-      t = "s";
-    } else {
-      return null;
-    }
+    if (sc.w != null && String(sc.w).length) { v = String(sc.w); t = "s"; }
+    else return null;
   }
-
   const out = { t, v };
   if (z !== undefined) out.z = z;
-  // 스타일은 여기서 복사하지 않음 (우리는 고유서식 적용)
   return out;
 }
-
 function copyValue(srcSheet, dstSheet, sAddr, dAddr){
   const sc = srcSheet[sAddr];
   if(!sc) return;
@@ -297,80 +286,147 @@ function copyValue(srcSheet, dstSheet, sAddr, dAddr){
   dstSheet[dAddr] = c;
 }
 
-/* ===== 고유 서식(테두리/음영/폰트) ===== */
-function borderThin(){
-  return {
-    top:{style:"thin", color:{rgb:"B0B0B0"}},
-    bottom:{style:"thin", color:{rgb:"B0B0B0"}},
-    left:{style:"thin", color:{rgb:"B0B0B0"}},
-    right:{style:"thin", color:{rgb:"B0B0B0"}}
+/* ===== 스타일 헬퍼 ===== */
+function border(style="thin", rgb="000000"){
+  const c = {rgb};
+  return { top:{style,color:c}, bottom:{style,color:c}, left:{style,color:c}, right:{style,color:c} };
+}
+const FONT10 = {name:"맑은 고딕", sz:10};
+const FONT11B = {name:"맑은 고딕", sz:11, bold:true};
+const FONT14B = {name:"맑은 고딕", sz:14, bold:true};
+
+function fill(rgb){ return {patternType:"solid", fgColor:{rgb}}; }
+
+function styleBase({bold=false, sz=10, align="center", fillRgb=null, bStyle="thin"}={}){
+  const s = {
+    font: {name:"맑은 고딕", sz, bold},
+    alignment:{ vertical:"center", horizontal:align, wrapText:true },
+    border: border(bStyle, "000000")
   };
-}
-const STYLE_HEADER = {
-  font:{bold:true, name:"맑은 고딕", sz:11},
-  alignment:{vertical:"center", horizontal:"center", wrapText:true},
-  fill:{patternType:"solid", fgColor:{rgb:"EEF2F6"}},
-  border:borderThin()
-};
-const STYLE_DATA = {
-  font:{name:"맑은 고딕", sz:10},
-  alignment:{vertical:"center", horizontal:"center", wrapText:true},
-  border:borderThin()
-};
-const STYLE_DATA_ALT = {
-  font:{name:"맑은 고딕", sz:10},
-  alignment:{vertical:"center", horizontal:"center", wrapText:true},
-  fill:{patternType:"solid", fgColor:{rgb:"FAFAFA"}},
-  border:borderThin()
-};
-const STYLE_TITLE = {
-  font:{bold:true, name:"맑은 고딕", sz:12},
-  alignment:{vertical:"center", horizontal:"center"},
-  fill:{patternType:"solid", fgColor:{rgb:"E6EEF9"}},
-  border:borderThin()
-};
-
-function setStyle(sh, addr, style){
-  if(!sh[addr]) return;
-  sh[addr].s = style;
+  if(fillRgb) s.fill = fill(fillRgb);
+  return s;
 }
 
-// 숫자처럼 보이면 숫자로(콤마용)
+function setStyle(sh, a, s){
+  if(!sh[a]) return;
+  sh[a].s = s;
+}
+
+/* 숫자표시 최대한 맞추기 */
 function maybeNumberCell(cell){
   if(!cell || cell.v == null) return;
-  if (typeof cell.v === "number") {
-    cell.t = "n";
-    cell.z = "#,##0";
-    return;
-  }
+  if (typeof cell.v === "number") { cell.t="n"; cell.z="#,##0"; return; }
   if (typeof cell.v === "string") {
     const s = cell.v.replace(/,/g,"").trim();
     if (/^-?\d+(\.\d+)?$/.test(s) && s.length <= 15) {
       const n = Number(s);
-      if (Number.isFinite(n)) {
-        cell.v = n;
-        cell.t = "n";
-        cell.z = "#,##0";
-      }
+      if (Number.isFinite(n)) { cell.v=n; cell.t="n"; cell.z="#,##0"; }
     }
   }
 }
 
-function autoColWidths(sh, cCount, rStart, rEnd){
-  const cols = Array.from({length:cCount}, ()=>({wch:10}));
-  for(let c=1;c<=cCount;c++){
-    let maxLen = 6;
-    for(let r=rStart;r<=rEnd;r++){
-      const a = A(c,r);
-      const cell = sh[a];
-      if(!cell) continue;
-      const v = cell.v;
-      const s = (v===null||v===undefined) ? "" : String(v);
-      if (s.length > maxLen) maxLen = s.length;
-    }
-    cols[c-1].wch = Math.max(8, Math.min(30, maxLen+2));
+/* ===== 템플릿 병합/서식 적용 (A~AZ 기준 최대 흡사) ===== */
+function applySooseokTemplate(ws, colCount, headerEnd, dataStart, lastRow){
+  // 1) 기본: 행높이 20
+  ws["!rows"] = Array.from({length:lastRow}, ()=>({hpt:20}));
+
+  // 2) 병합(스크린샷 기반 “가장 비슷하게”)
+  // 타이틀: (주)수석네트웍스 정산리스트 (대략 3행 전체)
+  ws["!merges"] = ws["!merges"] || [];
+  ws["!merges"].push(
+    { s:{r:2,c:0}, e:{r:2,c:colCount-1} } // A3:AZ3
+  );
+  // 노란 바(대략 5행 가운데)
+  // F5:O5 정도로 한 줄 강조(너 파일은 가운데에 노란 박스가 있어서 “중앙영역”을 잡음)
+  if(colCount >= 15){
+    ws["!merges"].push({ s:{r:4,c:5}, e:{r:4,c:14} }); // F5:O5
   }
-  sh["!cols"] = cols;
+
+  // 3) 스타일 블록
+  const S_TITLE = { font:FONT14B, alignment:{vertical:"center", horizontal:"center"}, border:border("thin","000000") };
+  const S_SUB   = { font:FONT11B, alignment:{vertical:"center", horizontal:"center"}, fill:fill("FFFF00"), border:border("thin","000000") };
+
+  // 헤더영역: 1~headerEnd
+  const S_H1 = styleBase({bold:true, sz:10, fillRgb:"D9D9D9", bStyle:"thin"}); // 기본 회색
+  const S_H2 = styleBase({bold:true, sz:10, fillRgb:"FFFFFF", bStyle:"medium"}); // 9행처럼 테두리 두껍게
+
+  // 데이터영역
+  const S_D  = styleBase({bold:false, sz:10, fillRgb:null, bStyle:"thin"});
+  const S_D_ALT = styleBase({bold:false, sz:10, fillRgb:"F2F2F2", bStyle:"thin"}); // 옅은 음영
+
+  // 컬러 하이라이트(스크린샷 느낌)
+  const S_YELLOW = styleBase({bold:true, sz:10, fillRgb:"FFFF00", bStyle:"thin"});
+  const S_ORANGE = styleBase({bold:true, sz:10, fillRgb:"F4B183", bStyle:"thin"});
+  const S_CYAN   = styleBase({bold:true, sz:10, fillRgb:"CFE8F3", bStyle:"thin"});
+  const S_PURPLE = styleBase({bold:true, sz:10, fillRgb:"D9D2E9", bStyle:"thin"});
+  const S_PINK   = styleBase({bold:true, sz:10, fillRgb:"F4CCCC", bStyle:"thin"});
+
+  // 타이틀/서브타이틀 적용
+  for(let c=1;c<=colCount;c++){
+    const aTitle = idxToCol(c) + 3;
+    if(ws[aTitle]) setStyle(ws, aTitle, S_TITLE);
+
+    const aSub = idxToCol(c) + 5;
+    // 중앙 노란 바 영역에만 적용
+    if(c>=6 && c<=15 && ws[aSub]) setStyle(ws, aSub, S_SUB);
+  }
+
+  // 헤더 적용 (1~headerEnd)
+  for(let r=1;r<=headerEnd;r++){
+    for(let c=1;c<=colCount;c++){
+      const a = idxToCol(c)+r;
+      if(!ws[a]) continue;
+
+      // 9행(컬럼명 있는 줄)을 “두꺼운 테두리 느낌”으로
+      if(r === headerEnd) setStyle(ws, a, S_H2);
+      else setStyle(ws, a, S_H1);
+
+      // 스샷 느낌 내는 컬러 포인트(대략적인 컬럼 구간)
+      // (정확한 컬럼 위치는 파일마다 조금 달라서 “구간 컬러”로 흉내)
+      if(r === headerEnd){
+        if(c>=1 && c<=4) setStyle(ws, a, S_YELLOW);   // 좌측(식별영역) 노란
+        if(c>=5 && c<=10) setStyle(ws, a, S_ORANGE);  // 판매/정보 영역 오렌지톤
+        if(c>=11 && c<=18) setStyle(ws, a, S_CYAN);   // 중간 연파랑
+        if(c>=19 && c<=26) setStyle(ws, a, S_PURPLE); // 연보라
+        if(c>=27 && c<=34) setStyle(ws, a, S_PINK);   // 연분홍
+      }
+    }
+  }
+
+  // 데이터 적용 + 짝수행 음영
+  for(let r=dataStart;r<=lastRow;r++){
+    const alt = ((r-dataStart)%2===1);
+    for(let c=1;c<=colCount;c++){
+      const a = idxToCol(c)+r;
+      if(!ws[a]) continue;
+      setStyle(ws, a, alt ? S_D_ALT : S_D);
+      maybeNumberCell(ws[a]);
+    }
+  }
+
+  // 4) 열너비: 너무 자동이면 깨져 보이니 “적당히 고정 느낌”
+  // (스크린샷처럼 좌측은 좁고, 중간 텍스트는 넓고, 금액은 중간)
+  const cols = [];
+  for(let c=1;c<=colCount;c++){
+    let w = 10;
+    if(c<=4) w = 8;
+    else if(c<=10) w = 14;
+    else if(c<=18) w = 12;
+    else if(c<=26) w = 14;
+    else if(c<=34) w = 11;
+    else w = 10;
+    cols.push({wch:w});
+  }
+  ws["!cols"] = cols;
+}
+
+/* workbook view helpers */
+function applyWorkbookView(wb){
+  // 일부 엑셀 버전에서만 반영될 수 있음(가능한 최대치로 설정)
+  wb.Workbook = wb.Workbook || {};
+  wb.Workbook.Views = wb.Workbook.Views || [{}];
+  wb.Workbook.Views[0].zoom = 70;
+  wb.Workbook.Views[0].showGridLines = 0;
 }
 
 $("zipBtn").onclick=async()=>{
@@ -382,7 +438,7 @@ $("zipBtn").onclick=async()=>{
     .map(cb=>decodeURIComponent(cb.dataset.g));
   if(selected.length===0){ msg("선택된 그룹이 없습니다.", true); return; }
 
-  const applyStyle = $("applyStyle").checked;
+  const useTemplate = $("sooseokStyle").checked;
   const valueOnly = $("valueOnly").checked;
 
   try{
@@ -390,83 +446,58 @@ $("zipBtn").onclick=async()=>{
     $("zipBtn").disabled=true;
     const zip = new JSZip();
 
-    // source last row
-    const srcRange = XLSX.utils.decode_range(sheet["!ref"]);
-    const srcLastRow = srcRange.e.r + 1;
-
     for(let i=0;i<selected.length;i++){
       const group = selected[i];
       const rows = groupsMap.get(group) || [];
 
       const out = {};
+      const outColCount = (v.cE - v.cS + 1);
 
-      // 1) 양식(1~hEnd) 복사: 값만
+      // 1) 헤더(1~headerEnd)
       for(let r=1; r<=v.hEnd; r++){
         for(let c=v.cS; c<=v.cE; c++){
           const srcA = A(c,r);
           const dstA = A(c - v.cS + 1, r);
           if(valueOnly) copyValue(sheet, out, srcA, dstA);
-          else {
-            // (옵션) 값+수식 포함 복사 (요청엔 필요 없음)
-            const sc = sheet[srcA];
-            if(sc) out[dstA] = {...sc};
-          }
+          else { const sc = sheet[srcA]; if(sc) out[dstA] = {...sc}; }
         }
       }
 
-      // 2) 데이터 행만 연속으로 채우기
+      // 2) 데이터: 그룹행만 연속
       let rr = v.dStart;
       for(const sr of rows){
         for(let c=v.cS; c<=v.cE; c++){
           const srcA = A(c,sr);
           const dstA = A(c - v.cS + 1, rr);
           if(valueOnly) copyValue(sheet, out, srcA, dstA);
-          else {
-            const sc = sheet[srcA];
-            if(sc) out[dstA] = {...sc};
-          }
+          else { const sc = sheet[srcA]; if(sc) out[dstA] = {...sc}; }
         }
         rr++;
       }
 
       const outLastRow = Math.max(v.hEnd, rr-1);
-      const outColCount = (v.cE - v.cS + 1);
 
-      // ref
       out["!ref"] = XLSX.utils.encode_range({
         s:{c:0,r:0},
         e:{c:outColCount-1, r:outLastRow-1}
       });
 
-      // 3) 고유서식 적용
-      if(applyStyle){
-        for(let r=1; r<=outLastRow; r++){
-          for(let c=1; c<=outColCount; c++){
-            const a = A(c,r);
-            if(!out[a]) continue;
-
-            // 숫자 처리(콤마)
-            maybeNumberCell(out[a]);
-
-            // 행별 스타일
-            if (r === 1) setStyle(out, a, STYLE_TITLE);
-            else if (r <= v.hEnd) setStyle(out, a, STYLE_HEADER);
-            else {
-              const isAlt = ((r - v.dStart) % 2 === 1);
-              setStyle(out, a, isAlt ? STYLE_DATA_ALT : STYLE_DATA);
-            }
-          }
-        }
-        autoColWidths(out, outColCount, 1, outLastRow);
+      // 3) 템플릿 스타일
+      if(useTemplate){
+        applySooseokTemplate(out, outColCount, v.hEnd, v.dStart, outLastRow);
+      }else{
+        // 최소한 행높이만
+        out["!rows"] = Array.from({length:outLastRow}, ()=>({hpt:20}));
       }
 
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, out, FIXED_SHEET);
+      applyWorkbookView(wb);
 
       const fname = `${v.month} (주)수석네트웍스_${safeFilePart(group)}.xlsx`;
       const bytes = XLSX.write(wb, { type:"array", bookType:"xlsx", cellStyles:true });
-
       zip.file(fname, bytes);
+
       $("status").textContent = `ZIP 생성 중 (${i+1}/${selected.length})`;
     }
 
