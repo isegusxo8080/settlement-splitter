@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>정산 분리툴</title>
 
-  <!-- xlsx-js-style (스타일 저장) -->
+  <!-- xlsx-js-style (스타일 저장 지원) -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
   <!-- JSZip -->
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
@@ -41,6 +41,8 @@
     .spinner{width:18px;height:18px;border-radius:50%;border:2px solid rgba(168,179,199,.35);border-top-color: rgba(232,238,248,.9);animation:spin .75s linear infinite}
     @keyframes spin { to { transform: rotate(360deg); } }
     .pill{display:inline-flex;align-items:center;gap:8px;padding:6px 10px;border-radius:999px;border:1px solid var(--line);background:rgba(14,21,34,.8);color:var(--muted);font-size:12px}
+    .chk{display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:rgba(14,21,34,.75)}
+    .chk input{min-width:auto}
   </style>
 </head>
 
@@ -92,10 +94,21 @@
           <button id="zipBtn" disabled>ZIP 생성</button>
         </div>
 
+        <div class="row" style="margin-top:10px">
+          <div class="chk">
+            <input id="applyStyle" type="checkbox" checked />
+            <label for="applyStyle" style="margin:0">출력파일에 “툴 고유 서식(테두리/음영/폰트)” 적용</label>
+          </div>
+          <div class="chk">
+            <input id="valueOnly" type="checkbox" checked />
+            <label for="valueOnly" style="margin:0">수식 제거하고 값만 저장</label>
+          </div>
+        </div>
+
         <div id="appMsg" class="muted" style="margin-top:10px"></div>
         <div class="muted" style="margin-top:6px">
-          ✅ 방식: <b>원본 시트 복제</b> 후, 선택 그룹 외 행은 <b>숨김 + 값삭제</b> → 스타일 그대로 유지<br/>
-          ✅ 수식은 전부 제거하고 “값(v)”만 남김
+          고정값: 시트명 <b>정산리스트</b>, 그룹열 <b>B</b> / 파일명: <b>N월 (주)수석네트웍스_(그룹명).xlsx</b><br/>
+          방식: <b>선택 그룹 행만 뽑아서 새 파일 생성</b> (숨김/삭제 안함)
         </div>
       </div>
 
@@ -252,108 +265,208 @@ function safeFilePart(s){
     .trim() || "그룹없음";
 }
 
-function deepClone(obj){
-  if (typeof structuredClone === "function") return structuredClone(obj);
-  return JSON.parse(JSON.stringify(obj)); // fallback (xlsx 객체는 대체로 plain)
+/* ===== 값만 남기기(수식 제거) ===== */
+function valueOnlyCell(sc){
+  if(!sc) return null;
+
+  // 원본 표시값 우선: v가 없으면 w를 문자열 값으로
+  let v = sc.v;
+  let t = sc.t;
+  let z = sc.z;
+
+  if (v === undefined || v === null) {
+    if (sc.w != null && String(sc.w).length) {
+      v = String(sc.w);
+      t = "s";
+    } else {
+      return null;
+    }
+  }
+
+  const out = { t, v };
+  if (z !== undefined) out.z = z;
+  // 스타일은 여기서 복사하지 않음 (우리는 고유서식 적용)
+  return out;
 }
 
-/* 수식 제거 + 값만 유지 (스타일은 그대로 둠) */
-function makeCellValueOnly(cell){
-  if(!cell) return;
+function copyValue(srcSheet, dstSheet, sAddr, dAddr){
+  const sc = srcSheet[sAddr];
+  if(!sc) return;
+  const c = valueOnlyCell(sc);
+  if(!c) return;
+  dstSheet[dAddr] = c;
+}
 
-  // 수식 제거
-  if ("f" in cell) delete cell.f;
-  if ("F" in cell) delete cell.F;
+/* ===== 고유 서식(테두리/음영/폰트) ===== */
+function borderThin(){
+  return {
+    top:{style:"thin", color:{rgb:"B0B0B0"}},
+    bottom:{style:"thin", color:{rgb:"B0B0B0"}},
+    left:{style:"thin", color:{rgb:"B0B0B0"}},
+    right:{style:"thin", color:{rgb:"B0B0B0"}}
+  };
+}
+const STYLE_HEADER = {
+  font:{bold:true, name:"맑은 고딕", sz:11},
+  alignment:{vertical:"center", horizontal:"center", wrapText:true},
+  fill:{patternType:"solid", fgColor:{rgb:"EEF2F6"}},
+  border:borderThin()
+};
+const STYLE_DATA = {
+  font:{name:"맑은 고딕", sz:10},
+  alignment:{vertical:"center", horizontal:"center", wrapText:true},
+  border:borderThin()
+};
+const STYLE_DATA_ALT = {
+  font:{name:"맑은 고딕", sz:10},
+  alignment:{vertical:"center", horizontal:"center", wrapText:true},
+  fill:{patternType:"solid", fgColor:{rgb:"FAFAFA"}},
+  border:borderThin()
+};
+const STYLE_TITLE = {
+  font:{bold:true, name:"맑은 고딕", sz:12},
+  alignment:{vertical:"center", horizontal:"center"},
+  fill:{patternType:"solid", fgColor:{rgb:"E6EEF9"}},
+  border:borderThin()
+};
 
-  // v가 없고 w만 있으면 w를 값으로 고정
-  if ((cell.v === undefined || cell.v === null) && cell.w != null && String(cell.w).length) {
-    cell.v = String(cell.w);
-    cell.t = "s";
+function setStyle(sh, addr, style){
+  if(!sh[addr]) return;
+  sh[addr].s = style;
+}
+
+// 숫자처럼 보이면 숫자로(콤마용)
+function maybeNumberCell(cell){
+  if(!cell || cell.v == null) return;
+  if (typeof cell.v === "number") {
+    cell.t = "n";
+    cell.z = "#,##0";
+    return;
+  }
+  if (typeof cell.v === "string") {
+    const s = cell.v.replace(/,/g,"").trim();
+    if (/^-?\d+(\.\d+)?$/.test(s) && s.length <= 15) {
+      const n = Number(s);
+      if (Number.isFinite(n)) {
+        cell.v = n;
+        cell.t = "n";
+        cell.z = "#,##0";
+      }
+    }
   }
 }
 
-/* 값 지우기(스타일 유지) */
-function clearCellValueKeepStyle(cell){
-  if(!cell) return;
-  if ("f" in cell) delete cell.f;
-  if ("F" in cell) delete cell.F;
-  delete cell.v;
-  delete cell.w;
-  delete cell.t;
-  delete cell.z;
-}
-
-/* 특정 행을 숨김 처리 (Excel에서 보이지 않게) */
-function hideRow(sheetObj, r1based){
-  if(!sheetObj["!rows"]) sheetObj["!rows"] = [];
-  sheetObj["!rows"][r1based-1] = Object.assign({}, sheetObj["!rows"][r1based-1], { hidden: true });
+function autoColWidths(sh, cCount, rStart, rEnd){
+  const cols = Array.from({length:cCount}, ()=>({wch:10}));
+  for(let c=1;c<=cCount;c++){
+    let maxLen = 6;
+    for(let r=rStart;r<=rEnd;r++){
+      const a = A(c,r);
+      const cell = sh[a];
+      if(!cell) continue;
+      const v = cell.v;
+      const s = (v===null||v===undefined) ? "" : String(v);
+      if (s.length > maxLen) maxLen = s.length;
+    }
+    cols[c-1].wch = Math.max(8, Math.min(30, maxLen+2));
+  }
+  sh["!cols"] = cols;
 }
 
 $("zipBtn").onclick=async()=>{
   const v=validate();
   if(v.errs.length){ msg(v.errs.join(" "), true); return; }
-  if(!workbook || !sheet || groupsMap.size===0){ msg("먼저 그룹 불러오기를 실행하세요.", true); return; }
+  if(!sheet || groupsMap.size===0){ msg("먼저 그룹 불러오기를 실행하세요.", true); return; }
 
   const selected=[...document.querySelectorAll("#groups input[type=checkbox]:checked")]
     .map(cb=>decodeURIComponent(cb.dataset.g));
   if(selected.length===0){ msg("선택된 그룹이 없습니다.", true); return; }
+
+  const applyStyle = $("applyStyle").checked;
+  const valueOnly = $("valueOnly").checked;
 
   try{
     setLoading(true, "ZIP 생성 중");
     $("zipBtn").disabled=true;
     const zip = new JSZip();
 
+    // source last row
     const srcRange = XLSX.utils.decode_range(sheet["!ref"]);
-    const lastRow = srcRange.e.r + 1;
+    const srcLastRow = srcRange.e.r + 1;
 
     for(let i=0;i<selected.length;i++){
       const group = selected[i];
-      const keepRows = new Set(groupsMap.get(group) || []);
+      const rows = groupsMap.get(group) || [];
 
-      // 1) 원본 워크북/시트 그대로 복제 → 스타일/테두리/음영 유지
-      const wb2 = deepClone(workbook);
+      const out = {};
 
-      // 2) 다른 시트는 제거(원하면 유지 가능하지만, 가볍게 1개만)
-      wb2.SheetNames = [FIXED_SHEET];
-      wb2.Sheets = { [FIXED_SHEET]: wb2.Sheets[FIXED_SHEET] };
-
-      const sh2 = wb2.Sheets[FIXED_SHEET];
-
-      // 3) 헤더(1~hEnd): 수식만 제거(값 고정)
+      // 1) 양식(1~hEnd) 복사: 값만
       for(let r=1; r<=v.hEnd; r++){
         for(let c=v.cS; c<=v.cE; c++){
-          const a = A(c,r);
-          if(sh2[a]) makeCellValueOnly(sh2[a]);
-        }
-      }
-
-      // 4) 데이터 영역: 선택 그룹 행만 남기고, 나머지는 숨김 + 값 삭제
-      for(let r=v.dStart; r<=lastRow; r++){
-        const isKeep = keepRows.has(r);
-
-        for(let c=v.cS; c<=v.cE; c++){
-          const a = A(c,r);
-          if(!sh2[a]) continue;
-
-          if(isKeep){
-            // 수식 제거 + 값만
-            makeCellValueOnly(sh2[a]);
-          }else{
-            // 스타일은 유지하고 값만 비우기(유출 방지)
-            clearCellValueKeepStyle(sh2[a]);
+          const srcA = A(c,r);
+          const dstA = A(c - v.cS + 1, r);
+          if(valueOnly) copyValue(sheet, out, srcA, dstA);
+          else {
+            // (옵션) 값+수식 포함 복사 (요청엔 필요 없음)
+            const sc = sheet[srcA];
+            if(sc) out[dstA] = {...sc};
           }
         }
-
-        if(!isKeep){
-          hideRow(sh2, r); // 화면에서도 안 보이게
-        }
       }
 
-      // 5) 파일 저장
-      const fname = `${v.month} (주)수석네트웍스_${safeFilePart(group)}.xlsx`;
-      const bytes = XLSX.write(wb2, { type:"array", bookType:"xlsx", cellStyles:true });
-      zip.file(fname, bytes);
+      // 2) 데이터 행만 연속으로 채우기
+      let rr = v.dStart;
+      for(const sr of rows){
+        for(let c=v.cS; c<=v.cE; c++){
+          const srcA = A(c,sr);
+          const dstA = A(c - v.cS + 1, rr);
+          if(valueOnly) copyValue(sheet, out, srcA, dstA);
+          else {
+            const sc = sheet[srcA];
+            if(sc) out[dstA] = {...sc};
+          }
+        }
+        rr++;
+      }
 
+      const outLastRow = Math.max(v.hEnd, rr-1);
+      const outColCount = (v.cE - v.cS + 1);
+
+      // ref
+      out["!ref"] = XLSX.utils.encode_range({
+        s:{c:0,r:0},
+        e:{c:outColCount-1, r:outLastRow-1}
+      });
+
+      // 3) 고유서식 적용
+      if(applyStyle){
+        for(let r=1; r<=outLastRow; r++){
+          for(let c=1; c<=outColCount; c++){
+            const a = A(c,r);
+            if(!out[a]) continue;
+
+            // 숫자 처리(콤마)
+            maybeNumberCell(out[a]);
+
+            // 행별 스타일
+            if (r === 1) setStyle(out, a, STYLE_TITLE);
+            else if (r <= v.hEnd) setStyle(out, a, STYLE_HEADER);
+            else {
+              const isAlt = ((r - v.dStart) % 2 === 1);
+              setStyle(out, a, isAlt ? STYLE_DATA_ALT : STYLE_DATA);
+            }
+          }
+        }
+        autoColWidths(out, outColCount, 1, outLastRow);
+      }
+
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, out, FIXED_SHEET);
+
+      const fname = `${v.month} (주)수석네트웍스_${safeFilePart(group)}.xlsx`;
+      const bytes = XLSX.write(wb, { type:"array", bookType:"xlsx", cellStyles:true });
+
+      zip.file(fname, bytes);
       $("status").textContent = `ZIP 생성 중 (${i+1}/${selected.length})`;
     }
 
