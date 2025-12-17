@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>정산 분리툴</title>
 
-  <!-- xlsx-js-style (스타일 저장용) -->
+  <!-- xlsx-js-style (스타일 저장) -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
   <!-- JSZip -->
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
@@ -47,6 +47,7 @@
 <body>
 <div class="wrap">
 
+  <!-- LOCK -->
   <div id="lock" class="card">
     <div class="topbar">
       <h1>정산 분리툴 🔐</h1>
@@ -63,6 +64,7 @@
     <div id="libMsg" class="muted" style="margin-top:8px"></div>
   </div>
 
+  <!-- APP -->
   <div id="app" class="card" style="display:none">
     <div class="topbar">
       <h1>정산리스트 그룹 분리 🧾</h1>
@@ -92,8 +94,8 @@
 
         <div id="appMsg" class="muted" style="margin-top:10px"></div>
         <div class="muted" style="margin-top:6px">
-          고정값: 시트명 <b>정산리스트</b>, 그룹열 <b>B</b> / 파일명: <b>N월 (주)수석네트웍스_(그룹명).xlsx</b><br/>
-          목표: <b>서식 유지 + 수식 제거(값만)</b>
+          ✅ 방식: <b>원본 시트 복제</b> 후, 선택 그룹 외 행은 <b>숨김 + 값삭제</b> → 스타일 그대로 유지<br/>
+          ✅ 수식은 전부 제거하고 “값(v)”만 남김
         </div>
       </div>
 
@@ -250,52 +252,47 @@ function safeFilePart(s){
     .trim() || "그룹없음";
 }
 
-/**
- * 핵심: “서식 유지 + 값만”
- * - 결과 셀은 {t, v, z, s}만 구성 (수식/기타 제거)
- * - 원본의 계산 결과(v)가 없으면 w(표시문자열)로라도 값 저장
- */
-function toValueStyleCell(sc){
-  if(!sc) return null;
-
-  // 스타일
-  const s = sc.s;
-
-  // 값 결정
-  let v = sc.v;
-  let t = sc.t;
-  let z = sc.z;
-
-  // 수식 제거: f/F는 무시(아예 새 셀에 넣지 않음)
-  // 계산된 v가 없으면, 화면에 보이는 w를 문자열 값으로 사용
-  if (v === undefined || v === null) {
-    if (sc.w !== undefined && sc.w !== null && String(sc.w).length) {
-      v = String(sc.w);
-      t = "s";
-    } else {
-      // 완전 빈 셀
-      return null;
-    }
-  }
-
-  const out = { t, v };
-  if (z !== undefined) out.z = z;
-  if (s !== undefined) out.s = s;
-  return out;
+function deepClone(obj){
+  if (typeof structuredClone === "function") return structuredClone(obj);
+  return JSON.parse(JSON.stringify(obj)); // fallback (xlsx 객체는 대체로 plain)
 }
 
-function copyCellValueStyle(srcSheet, dstSheet, sAddr, dAddr){
-  const sc = srcSheet[sAddr];
-  if(!sc) return;
-  const c = toValueStyleCell(sc);
-  if(!c) return;
-  dstSheet[dAddr] = c;
+/* 수식 제거 + 값만 유지 (스타일은 그대로 둠) */
+function makeCellValueOnly(cell){
+  if(!cell) return;
+
+  // 수식 제거
+  if ("f" in cell) delete cell.f;
+  if ("F" in cell) delete cell.F;
+
+  // v가 없고 w만 있으면 w를 값으로 고정
+  if ((cell.v === undefined || cell.v === null) && cell.w != null && String(cell.w).length) {
+    cell.v = String(cell.w);
+    cell.t = "s";
+  }
+}
+
+/* 값 지우기(스타일 유지) */
+function clearCellValueKeepStyle(cell){
+  if(!cell) return;
+  if ("f" in cell) delete cell.f;
+  if ("F" in cell) delete cell.F;
+  delete cell.v;
+  delete cell.w;
+  delete cell.t;
+  delete cell.z;
+}
+
+/* 특정 행을 숨김 처리 (Excel에서 보이지 않게) */
+function hideRow(sheetObj, r1based){
+  if(!sheetObj["!rows"]) sheetObj["!rows"] = [];
+  sheetObj["!rows"][r1based-1] = Object.assign({}, sheetObj["!rows"][r1based-1], { hidden: true });
 }
 
 $("zipBtn").onclick=async()=>{
   const v=validate();
   if(v.errs.length){ msg(v.errs.join(" "), true); return; }
-  if(!sheet || groupsMap.size===0){ msg("먼저 그룹 불러오기를 실행하세요.", true); return; }
+  if(!workbook || !sheet || groupsMap.size===0){ msg("먼저 그룹 불러오기를 실행하세요.", true); return; }
 
   const selected=[...document.querySelectorAll("#groups input[type=checkbox]:checked")]
     .map(cb=>decodeURIComponent(cb.dataset.g));
@@ -304,61 +301,59 @@ $("zipBtn").onclick=async()=>{
   try{
     setLoading(true, "ZIP 생성 중");
     $("zipBtn").disabled=true;
-
     const zip = new JSZip();
 
-    // 열너비/병합(헤더 기준)도 보존 시도
-    const srcCols = sheet["!cols"];
-    const srcMerges = sheet["!merges"];
+    const srcRange = XLSX.utils.decode_range(sheet["!ref"]);
+    const lastRow = srcRange.e.r + 1;
 
     for(let i=0;i<selected.length;i++){
-      const g = selected[i];
-      const rows = groupsMap.get(g) || [];
-      const out = {};
+      const group = selected[i];
+      const keepRows = new Set(groupsMap.get(group) || []);
 
-      // 1~양식끝행 복사
+      // 1) 원본 워크북/시트 그대로 복제 → 스타일/테두리/음영 유지
+      const wb2 = deepClone(workbook);
+
+      // 2) 다른 시트는 제거(원하면 유지 가능하지만, 가볍게 1개만)
+      wb2.SheetNames = [FIXED_SHEET];
+      wb2.Sheets = { [FIXED_SHEET]: wb2.Sheets[FIXED_SHEET] };
+
+      const sh2 = wb2.Sheets[FIXED_SHEET];
+
+      // 3) 헤더(1~hEnd): 수식만 제거(값 고정)
       for(let r=1; r<=v.hEnd; r++){
         for(let c=v.cS; c<=v.cE; c++){
-          copyCellValueStyle(sheet, out, A(c,r), A(c - v.cS + 1, r));
+          const a = A(c,r);
+          if(sh2[a]) makeCellValueOnly(sh2[a]);
         }
       }
 
-      // 데이터행 복사(연속)
-      let rr=v.dStart;
-      for(const sr of rows){
+      // 4) 데이터 영역: 선택 그룹 행만 남기고, 나머지는 숨김 + 값 삭제
+      for(let r=v.dStart; r<=lastRow; r++){
+        const isKeep = keepRows.has(r);
+
         for(let c=v.cS; c<=v.cE; c++){
-          copyCellValueStyle(sheet, out, A(c,sr), A(c - v.cS + 1, rr));
-        }
-        rr++;
-      }
+          const a = A(c,r);
+          if(!sh2[a]) continue;
 
-      const lastRow = Math.max(v.hEnd, rr-1);
-      out["!ref"] = XLSX.utils.encode_range({ s:{c:0,r:0}, e:{c:(v.cE - v.cS), r:(lastRow-1)} });
-
-      // 열너비 meta (가능한 범위)
-      if (Array.isArray(srcCols)) {
-        out["!cols"] = srcCols.slice(v.cS-1, v.cE);
-      }
-      // 병합 meta (헤더영역만)
-      if (Array.isArray(srcMerges)) {
-        const merges = [];
-        for(const m of srcMerges){
-          const r1=m.s.r+1, r2=m.e.r+1;
-          const c1=m.s.c+1, c2=m.e.c+1;
-          if(r1>=1 && r2<=v.hEnd && c1>=v.cS && c2<=v.cE){
-            merges.push({ s:{r:r1-1,c:c1-v.cS}, e:{r:r2-1,c:c2-v.cS} });
+          if(isKeep){
+            // 수식 제거 + 값만
+            makeCellValueOnly(sh2[a]);
+          }else{
+            // 스타일은 유지하고 값만 비우기(유출 방지)
+            clearCellValueKeepStyle(sh2[a]);
           }
         }
-        out["!merges"] = merges;
+
+        if(!isKeep){
+          hideRow(sh2, r); // 화면에서도 안 보이게
+        }
       }
 
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, out, FIXED_SHEET);
-
-      const fname = `${v.month} (주)수석네트웍스_${safeFilePart(g)}.xlsx`;
-      const bytes = XLSX.write(wb, { type:"array", bookType:"xlsx", cellStyles:true });
-
+      // 5) 파일 저장
+      const fname = `${v.month} (주)수석네트웍스_${safeFilePart(group)}.xlsx`;
+      const bytes = XLSX.write(wb2, { type:"array", bookType:"xlsx", cellStyles:true });
       zip.file(fname, bytes);
+
       $("status").textContent = `ZIP 생성 중 (${i+1}/${selected.length})`;
     }
 
