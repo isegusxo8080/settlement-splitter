@@ -5,7 +5,9 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>정산 분리툴</title>
 
+  <!-- xlsx-js-style (스타일/병합/메타 최대 보존) -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
+  <!-- JSZip -->
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 
   <style>
@@ -45,6 +47,7 @@
 <body>
 <div class="wrap">
 
+  <!-- LOCK -->
   <div id="lock" class="card">
     <div class="topbar">
       <h1>정산 분리툴 🔐</h1>
@@ -61,6 +64,7 @@
     <div id="libMsg" class="muted" style="margin-top:8px"></div>
   </div>
 
+  <!-- APP -->
   <div id="app" class="card" style="display:none">
     <div class="topbar">
       <h1>정산리스트 그룹 분리 🧾</h1>
@@ -90,7 +94,7 @@
 
         <div id="appMsg" class="muted" style="margin-top:10px"></div>
         <div class="muted" style="margin-top:6px">
-          템플릿 기반: repo의 <b>template.xlsx</b> 서식을 그대로 사용하고, 데이터 영역만 값으로 주입합니다.
+          템플릿 기반: repo의 <b>template.xlsx</b> 서식을 그대로 사용하고, 지정한 데이터 범위만 <b>값으로 주입</b>합니다.
         </div>
       </div>
 
@@ -114,10 +118,12 @@
 </div>
 
 <script>
+/* ====== 고정 설정 ====== */
 const PASSWORD = "ss315696ss";
 const FIXED_SHEET = "정산리스트";
 const GROUP_COL = "B";
-const TEMPLATE_URL = "./template.xlsx"; // repo 루트에 올려둔 템플릿
+const TEMPLATE_URL = "./template.xlsx"; // repo 루트에 업로드
+
 const $ = id => document.getElementById(id);
 
 function setLoading(on, text){
@@ -133,6 +139,7 @@ function msg(html, isErr=false){
   $("libMsg").innerHTML = ok ? `<span class="ok">라이브러리 로드 완료</span>` : `<span class="err">라이브러리 로드 실패 (새로고침)</span>`;
 })();
 
+/* ====== 비번 ====== */
 $("enterBtn").onclick = () => {
   $("lockMsg").textContent = "";
   if ($("pw").value !== PASSWORD) { $("lockMsg").textContent = "비밀번호가 틀렸습니다."; return; }
@@ -142,9 +149,14 @@ $("enterBtn").onclick = () => {
 };
 $("pw").addEventListener("keydown", e => { if(e.key==="Enter") $("enterBtn").click(); });
 
-let sourceWb=null, sourceSheet=null, groupsMap=new Map();
-let templateWb=null; // 캐시
+/* ====== 상태 변수 ====== */
+let sourceSheet=null, groupsMap=new Map();
 
+// ✅ 템플릿 바이너리 캐시(서식 보존 핵심)
+let templateAB = null;
+let templateChecked = false;
+
+/* ====== 유틸 ====== */
 function colToIdx(c){
   let n=0; c=String(c||"").toUpperCase().trim();
   if(!/^[A-Z]+$/.test(c)) return null;
@@ -171,6 +183,13 @@ function validate(){
   return {month,hEnd,dStart,cS,cE,errs};
 }
 
+function safeFilePart(s){
+  return String(s ?? "").trim()
+    .replace(/[\\\/:*?"<>|]/g, "_")
+    .replace(/\s+/g, " ")
+    .trim() || "그룹없음";
+}
+
 function renderGroups(){
   const root=$("groups"); root.innerHTML="";
   const keys=[...groupsMap.keys()].sort((a,b)=>String(a).localeCompare(String(b),"ko"));
@@ -183,6 +202,9 @@ function renderGroups(){
   $("groupCount").textContent=`그룹 ${keys.length}개`;
 }
 
+$("allOn").onclick=()=>document.querySelectorAll("#groups input[type=checkbox]").forEach(x=>x.checked=true);
+$("allOff").onclick=()=>document.querySelectorAll("#groups input[type=checkbox]").forEach(x=>x.checked=false);
+
 $("file").onchange=()=>{
   const ok=!!$("file").files?.[0];
   $("scanBtn").disabled=!ok;
@@ -192,37 +214,25 @@ $("file").onchange=()=>{
   $("groups").innerHTML="";
   $("groupCount").textContent="업로드 후 그룹을 불러오세요.";
   msg("");
-  sourceWb=null; sourceSheet=null; groupsMap=new Map();
+  sourceSheet=null; groupsMap=new Map();
 };
 
-$("allOn").onclick=()=>document.querySelectorAll("#groups input[type=checkbox]").forEach(x=>x.checked=true);
-$("allOff").onclick=()=>document.querySelectorAll("#groups input[type=checkbox]").forEach(x=>x.checked=false);
-
-function safeFilePart(s){
-  return String(s ?? "").trim()
-    .replace(/[\\\/:*?"<>|]/g, "_")
-    .replace(/\s+/g, " ")
-    .trim() || "그룹없음";
-}
-
-/* 템플릿 로드(한 번만) */
+/* ====== 템플릿 로드(바이너리 캐시) ====== */
 async function ensureTemplateLoaded(){
-  if(templateWb) return templateWb;
-  const res = await fetch(TEMPLATE_URL, {cache:"no-store"});
+  if(templateAB && templateChecked) return;
+
+  const res = await fetch(TEMPLATE_URL, { cache: "no-store" });
   if(!res.ok) throw new Error(`template.xlsx 로드 실패: ${res.status}`);
-  const ab = await res.arrayBuffer();
-  templateWb = XLSX.read(ab, {type:"array", cellStyles:true, cellNF:true, cellText:false});
-  if(!templateWb.Sheets?.[FIXED_SHEET]) throw new Error(`템플릿에 '${FIXED_SHEET}' 시트가 없습니다.`);
-  return templateWb;
+
+  templateAB = await res.arrayBuffer();
+
+  // 템플릿 내부 시트 존재 1회 체크
+  const tmp = XLSX.read(templateAB, { type:"array", cellStyles:true, cellNF:true, cellText:false });
+  if(!tmp.Sheets?.[FIXED_SHEET]) throw new Error(`템플릿에 '${FIXED_SHEET}' 시트가 없습니다.`);
+  templateChecked = true;
 }
 
-/* 깊은 복사 */
-function deepClone(obj){
-  if (typeof structuredClone === "function") return structuredClone(obj);
-  return JSON.parse(JSON.stringify(obj));
-}
-
-/* 값 셀 만들기(수식 제거, 보이는 값 기준) */
+/* ====== 값만 추출(수식 제거, 보이는 값 우선) ====== */
 function valueOnlyCell(sc){
   if(!sc) return null;
   let v = sc.v;
@@ -230,50 +240,52 @@ function valueOnlyCell(sc){
   let z = sc.z;
 
   if (v === undefined || v === null) {
+    // w(표시값)이라도 있으면 문자열로
     if (sc.w != null && String(sc.w).length) { v = String(sc.w); t = "s"; }
     else return null;
   }
+
   const out = { t, v };
   if (z !== undefined) out.z = z;
   return out;
 }
 
-/* 템플릿의 데이터영역을 먼저 비움(서식은 유지) */
+/* ====== 템플릿 데이터 영역 값만 지우기(서식/병합 유지) ====== */
 function clearTemplateDataArea(tSheet, dStart, cS, cE){
   const ref = tSheet["!ref"];
   if(!ref) return;
+
   const rng = XLSX.utils.decode_range(ref);
   const lastRow = rng.e.r + 1;
-  const maxRow = Math.max(lastRow, dStart + 2000); // 템플릿에 데이터가 짧아도 넉넉히 비움
 
-  for(let r=dStart; r<=maxRow; r++){
+  // 템플릿이 데이터영역을 충분히 포함하는 걸 가정
+  // 그래도 넉넉히(템플릿 범위 내)만 지움
+  for(let r=dStart; r<=lastRow; r++){
     for(let c=cS; c<=cE; c++){
       const a = A(c, r);
       const cell = tSheet[a];
       if(!cell) continue;
-      // 값/수식만 제거 (스타일 유지)
       delete cell.v; delete cell.w; delete cell.t; delete cell.f; delete cell.F;
     }
   }
 }
 
-/* source에서 그룹 행들을 읽어 template에 연속으로 값 주입 */
+/* ====== 그룹행만 연속으로 템플릿에 값 주입 ====== */
 function writeGroupValuesIntoTemplate(sourceSheet, tSheet, groupRows, dStart, cS, cE){
   let rr = dStart;
+
   for(const sr of groupRows){
     for(let c=cS; c<=cE; c++){
       const sAddr = A(c, sr);
       const dAddr = A(c, rr);
-      const sc = sourceSheet[sAddr];
-      const vc = valueOnlyCell(sc);
+
+      const vc = valueOnlyCell(sourceSheet[sAddr]);
       if(!vc) continue;
 
-      // 템플릿 셀 있으면 그 셀에 값만 주입(서식 유지), 없으면 새로 생성
       if(tSheet[dAddr]){
         tSheet[dAddr].t = vc.t;
         tSheet[dAddr].v = vc.v;
         if(vc.z !== undefined) tSheet[dAddr].z = vc.z;
-        // 수식 제거 보장
         delete tSheet[dAddr].f; delete tSheet[dAddr].F;
       }else{
         tSheet[dAddr] = vc;
@@ -282,19 +294,21 @@ function writeGroupValuesIntoTemplate(sourceSheet, tSheet, groupRows, dStart, cS
     rr++;
   }
 
-  // !ref 확장 (템플릿보다 아래로 내려간 경우)
+  // !ref가 템플릿에 이미 충분히 잡혀있을 확률이 높지만,
+  // 혹시 모자라면 아래로 확장
   const ref = tSheet["!ref"];
   if(ref){
     const rng = XLSX.utils.decode_range(ref);
-    const outLast = Math.max(rng.e.r + 1, rr-1);
-    const outColLast = Math.max(rng.e.c + 1, cE);
+    const outLastRow = Math.max(rng.e.r + 1, rr - 1);
+    const outLastCol = Math.max(rng.e.c + 1, cE);
     tSheet["!ref"] = XLSX.utils.encode_range({
-      s:{c:0, r:0},
-      e:{c:outColLast-1, r:outLast-1}
+      s:{c:rng.s.c, r:rng.s.r},
+      e:{c:outLastCol-1, r:outLastRow-1}
     });
   }
 }
 
+/* ====== 그룹 스캔 ====== */
 $("scanBtn").onclick=async()=>{
   const f=$("file").files?.[0]; if(!f) return;
   const v=validate(); if(v.errs.length){ msg(v.errs.join(" "), true); return; }
@@ -307,17 +321,18 @@ $("scanBtn").onclick=async()=>{
     $("allOff").disabled=true;
     $("groups").innerHTML=`<div class="row"><span class="spinner"></span><span class="muted">로딩중...</span></div>`;
 
-    // 템플릿 미리 로드(없으면 여기서 바로 에러 보여주기)
+    // 템플릿 미리 체크(없으면 즉시 에러)
     await ensureTemplateLoaded();
 
     const ab=await f.arrayBuffer();
-    sourceWb = XLSX.read(ab, {type:"array", cellStyles:true, cellNF:true, cellText:false});
-    sourceSheet = sourceWb.Sheets[FIXED_SHEET];
+    const wb = XLSX.read(ab, {type:"array", cellStyles:true, cellNF:true, cellText:false});
+    sourceSheet = wb.Sheets[FIXED_SHEET];
     if(!sourceSheet){ msg(`원본에 '${FIXED_SHEET}' 시트를 찾지 못했습니다.`, true); setLoading(false,"오류"); return; }
 
     groupsMap.clear();
     const gcol=colToIdx(GROUP_COL);
     const range=XLSX.utils.decode_range(sourceSheet["!ref"]);
+
     for(let r=v.dStart; r<=range.e.r+1; r++){
       const cell = sourceSheet[A(gcol,r)];
       const gv = cell ? String(cell.v ?? "").trim() : "";
@@ -328,10 +343,12 @@ $("scanBtn").onclick=async()=>{
 
     renderGroups();
     const has=groupsMap.size>0;
+
     $("zipBtn").disabled=!has;
     $("allOn").disabled=!has;
     $("allOff").disabled=!has;
-    msg(has ? `<span class="ok">그룹 로드 완료 (템플릿 사용 준비됨)</span>` : `<span class="err">그룹 데이터가 없습니다.</span>`, !has);
+
+    msg(has ? `<span class="ok">그룹 로드 완료 (template.xlsx 서식 사용)</span>` : `<span class="err">그룹 데이터가 없습니다.</span>`, !has);
     setLoading(false, has ? "대기" : "오류");
   }catch(e){
     console.error(e);
@@ -342,6 +359,7 @@ $("scanBtn").onclick=async()=>{
   }
 };
 
+/* ====== ZIP 생성 ====== */
 $("zipBtn").onclick=async()=>{
   const v=validate();
   if(v.errs.length){ msg(v.errs.join(" "), true); return; }
@@ -355,22 +373,21 @@ $("zipBtn").onclick=async()=>{
     setLoading(true, "ZIP 생성 중");
     $("zipBtn").disabled=true;
 
-    const base = await ensureTemplateLoaded();
+    await ensureTemplateLoaded();
     const zip = new JSZip();
 
     for(let i=0;i<selected.length;i++){
       const group = selected[i];
       const rows = groupsMap.get(group) || [];
 
-      // 템플릿 워크북을 복제
-      const wb2 = deepClone(base);
+      // ✅ 그룹마다 템플릿을 새로 읽기(서식/병합/열너비/행높이 보존 핵심)
+      const wb2 = XLSX.read(templateAB, { type:"array", cellStyles:true, cellNF:true, cellText:false });
       const tSheet = wb2.Sheets[FIXED_SHEET];
 
-      // 템플릿 데이터영역 초기화 후 그룹값 주입
+      // 템플릿 데이터 영역 값만 초기화 후 주입
       clearTemplateDataArea(tSheet, v.dStart, v.cS, v.cE);
       writeGroupValuesIntoTemplate(sourceSheet, tSheet, rows, v.dStart, v.cS, v.cE);
 
-      // 저장
       const fname = `${v.month} (주)수석네트웍스_${safeFilePart(group)}.xlsx`;
       const bytes = XLSX.write(wb2, { type:"array", bookType:"xlsx", cellStyles:true });
       zip.file(fname, bytes);
